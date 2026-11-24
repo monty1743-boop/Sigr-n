@@ -1,52 +1,87 @@
 # Sigrún
 
-A pocket glass for a hard minute. Sigrún is a valkyrie; her name means victory rune. This one is a smaller kind of victory: the minute she stays.
+Pocket breath glass on a Waveshare ESP32-S3-Touch-AMOLED-1.75C. One 466×466 picture. No labels except a number that appears for a moment when a timed task is chosen.
 
-It runs on a Waveshare ESP32-S3-Touch-AMOLED-1.75C. The round panel is always one breath. Picking it up is the practice. A short press of PWR, or BOOT, is three cyclic sighs, and then the breath is back. There is no menu in her hand.
+## Hardware
 
-Lists, a task, feeling words, and a soft noise are decisions, so they belong on the charger, one card at a time. That catalog is not in this first firmware. What is here is the picture, the sigh, and the rules for what may edit the picture. Those rules are tested on the host.
+| Part | Role |
+| --- | --- |
+| ESP32-S3R8 | 240 MHz, 8 MB PSRAM, 32 MB flash |
+| CO5300 | 466×466 RGB565, circle mask r=232, brightness 35 |
+| CST9217 | Touch |
+| QMI8658 | Accel ±4 g, gyro ±256 dps, I2C 0x6B or 0x6A |
+| ES7210 | Mics, 16 kHz stereo |
+| ES8311 | Speaker, PA on GPIO46, codec volume 90 |
+| AXP2101 | PMIC, I2C 0x34. Short press is a mode step. Long press is power-off |
+| GPIO0 | BOOT. Short press is the same mode step |
 
-## The picture
+I2C is GPIO14 SCL and GPIO15 SDA. The sense loop is 20 ms. A painted frame is about 60–80 ms.
 
-True black in the corners, so those AMOLED pixels are off. The ring is drawn in floating point, given a short trail, and dithered down to the panel's RGB565 so the bloom does not band into stripes. A task set at home puts the breath inside a moon; darkness eats the moon with a wide dusk, not a clock hand.
+## Behavior
 
-![The everyday breath](docs/proof/tide.png)
+A short press of PWR or BOOT advances one card, on the charger or off it:
 
-![The top of a sigh](docs/proof/sigh.png)
+`quiet → 5 min → 10 min → 25 min → white → pink → brown → quiet`
 
-![The long exhale](docs/proof/exhale.png)
+The picture is the mode. A moon is a task. A bright arc is white noise, a warmer arc is pink, a heavy warm ring is brown. Quiet is a plain breath. Noise and a task are exclusive. The speaker is silent in quiet.
 
-![The moon, half gone](docs/proof/moon.png)
+On the charger a moon is armed and does not count. Off the charger it starts on that press, or when unplugged. The lit fraction is time left over the chosen length, scaled by 0.34, 0.66, or 1. One second after the press the digits 5, 10, or 25 are drawn for about 2 s, then fade in 0.4 s.
 
-The minute of motion is [docs/proof/sigrun.mp4](docs/proof/sigrun.mp4). It is the same framebuffer the panel gets: the breath, three sighs, the moon, a walking pace, a sway, a still hand, and a warmer exhale.
+At zero the moon opens again, panel brightness rises from 35 to 100, and one decaying note plays (174 Hz plus a short octave). Brightness falls back to 35 and the card returns to quiet.
 
-## Host
+Breath source, first match: a finger trace while unplugged and not holding the bead (period at least 7.5 s), else walking at 5.6 s, else sway at 10 s, else a close breath in a quiet room, else a 10 s clock. A finger held at the bottom of the exhale waits there. Rest radius is 118 px, full is 206 px. Past radius 168 the stroke thickens, and it is about twice as wide at 206.
 
-The preview draws that framebuffer on this computer. No board required.
+Tilt moves the picture, dead zone 0.02 g, full travel ±42 px by about 0.17 g. The bead can be flicked, bounces inside r=202, waits 1 s, then springs home. Color is teal. Warmth, from room level or the pink and brown cards, shifts it toward gold.
 
-```bash
-cd preview
-make test
-./preview still 4500 out/tide.ppm
-./preview reel | ffmpeg -y -f rawvideo -pix_fmt rgb24 -s 466x466 -framerate 30 -i - \
-  -c:v libx264 -pix_fmt yuv420p -crf 17 ../docs/proof/sigrun.mp4
+## Logic
+
+```mermaid
+flowchart TD
+  press["PWR short or BOOT"] --> card["Next card"]
+  card --> kind{"Card"}
+  kind -->|"0"| quiet["Quiet breath"]
+  kind -->|"1, 2, 3"| moon["Moon: 5, 10, or 25 min"]
+  kind -->|"4, 5, 6"| noise["White, pink, or brown"]
+  moon --> digits["After 1 s, draw 5, 10, or 25 for 2 s"]
+  moon --> power{"Charger"}
+  power -->|"plugged"| armed["Armed icon, no countdown"]
+  power -->|"unplugged"| run["Disk shrinks with time left"]
+  armed -->|"unplug"| run
+  run -->|"time is zero"| ending["Moon returns, brightness 100, one note"]
+  ending --> quiet
+  noise --> speaker["ES8311, volume 90"]
 ```
 
-`make test` checks the rules: a rescue is the sigh, a second rescue inside a minute is the grounding script, walking does not cancel a sigh, a traced circle cannot go faster than about eight breaths a minute, and a finger held down waits at the bottom of the exhale.
+```mermaid
+flowchart LR
+  imu["QMI8658"] --> body["glass_body"]
+  mics["ES7210"] --> body
+  touch["CST9217"] --> body
+  body --> step["sigrun_step"]
+  buttons["PWR or BOOT"] --> step
+  step --> look["glass_look"]
+  look --> ease["ease"]
+  ease --> paint["glass_paint"]
+  paint --> panel["CO5300"]
+  step --> audio["noise or end note"]
+```
 
-## On the board
+`glass_body` turns the IMU into walk, sway, still, fidget, and rock, the touch into a breath period or a bead grab, and the mics into room level and a close breath. `sigrun_step` picks the breath and the card. `glass_paint` draws the ring as one band, the moon, the bead, and the digits into a heat buffer, then dithers that to RGB565.
 
-ESP-IDF 5.5 or newer. From `firmware/`:
+## Build
+
+Host checks, no board:
 
 ```bash
+make -C preview test
+```
+
+Firmware, ESP-IDF 5.5:
+
+```bash
+cd firmware
 idf.py set-target esp32s3
 idf.py build flash monitor
 ```
 
-The panel backlight stays low (35). PWR and BOOT, short press, start the sighs. A long press of PWR still belongs to the power chip. Hold BOOT only while the chip is resetting if you mean to enter the ROM downloader.
-
-The QMI8658, the microphones, and the touch path are in the plan and in the host rules. This firmware does not read them yet. The glass on the desk breathes, and it sighs.
-
-## What it is not
-
-It does not treat ADHD. It does not replace care. An episode that feels medical needs a person.
+Stills from the host painter are in `docs/proof/`.

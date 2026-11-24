@@ -30,9 +30,9 @@ static float settle(float t)
     return s * s;
 }
 
-static const float R_REST = 96.f;
-static const float R_FULL = 158.f;
-static const float R_SIGH = 184.f;
+static const float R_REST = 118.f;
+static const float R_FULL = 206.f;
+static const float R_SIGH = 218.f;
 
 void glass_look_clear(glass_look *out)
 {
@@ -45,13 +45,20 @@ void glass_look_clear(glass_look *out)
     out->warmth = 0.f;
     out->disk = 0.f;
     out->sway = 0.f;
+    out->sway_y = 0.f;
     out->gather = 0.f;
     out->bead = 0.f;
     out->bead_angle = 0.f;
+    out->bead_free = 0;
+    out->bead_x = 0.f;
+    out->bead_y = 0.f;
     out->light_angle = 0.f;
     out->arc = 0.f;
     out->marks = 0.f;
     out->marks_lit = 0.f;
+    out->numeral = 0;
+    out->numeral_light = 0.f;
+    out->lamp = 0.f;
 }
 
 static void tide_shape(uint32_t ms, float *radius, float *openness)
@@ -131,11 +138,11 @@ void glass_look_sigh(uint32_t elapsed_ms, glass_look *out)
 
     if (at < GLASS_SIGH_IN_MS) {
         float u = smooth((float)at / (float)GLASS_SIGH_IN_MS);
-        radius = lerpf(R_REST, 156.f, u);
+        radius = lerpf(R_REST, 188.f, u);
         openness = 0.35f + 0.55f * u;
     } else if (at < GLASS_SIGH_IN_MS + GLASS_SIGH_TOP_MS) {
         float u = smooth((float)(at - GLASS_SIGH_IN_MS) / (float)GLASS_SIGH_TOP_MS);
-        radius = lerpf(156.f, R_SIGH, u);
+        radius = lerpf(188.f, R_SIGH, u);
         second = sinf(u * 3.1415926f);
         radius_second = radius * (1.07f - 0.04f * u);
         openness = 0.9f + 0.1f * u;
@@ -160,10 +167,10 @@ void glass_look_sigh(uint32_t elapsed_ms, glass_look *out)
         uint32_t cycle = back % GLASS_SIGH_CYCLE_MS;
         float lag = R_REST;
         if (cycle < GLASS_SIGH_IN_MS) {
-            lag = lerpf(R_REST, 156.f, smooth((float)cycle / (float)GLASS_SIGH_IN_MS));
+            lag = lerpf(R_REST, 188.f, smooth((float)cycle / (float)GLASS_SIGH_IN_MS));
         } else if (cycle < GLASS_SIGH_IN_MS + GLASS_SIGH_TOP_MS) {
             float u = smooth((float)(cycle - GLASS_SIGH_IN_MS) / (float)GLASS_SIGH_TOP_MS);
-            lag = lerpf(156.f, R_SIGH, u);
+            lag = lerpf(188.f, R_SIGH, u);
         } else if (cycle < GLASS_SIGH_IN_MS + GLASS_SIGH_TOP_MS + GLASS_SIGH_OUT_MS) {
             float u = settle((float)(cycle - GLASS_SIGH_IN_MS - GLASS_SIGH_TOP_MS) / (float)GLASS_SIGH_OUT_MS);
             lag = lerpf(R_SIGH, R_REST, u);

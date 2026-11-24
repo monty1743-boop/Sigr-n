@@ -1,0 +1,527 @@
+#include "board.h"
+
+#include <math.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "bsp/display.h"
+#include "bsp/esp-bsp.h"
+#include "driver/gpio.h"
+#include "driver/i2c_master.h"
+#include "esp_codec_dev.h"
+#include "esp_log.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "lvgl.h"
+
+static const char *TAG = "sigrun";
+
+#define BOOT_GPIO GPIO_NUM_0
+
+#define AXP_ADDR 0x34
+#define AXP_CHIP_ID 0x4A
+#define AXP_REG_ID 0x03
+#define AXP_REG_STATUS1 0x00
+#define AXP_REG_STATUS2 0x01
+#define AXP_REG_INTEN2 0x41
+#define AXP_REG_INTSTS2 0x49
+#define AXP_PKEY_LONG (1u << 2)
+#define AXP_PKEY_SHORT (1u << 3)
+
+#define QMI_ADDR_L 0x6B
+#define QMI_ADDR_H 0x6A
+#define QMI_WHOAMI 0x05
+#define QMI_REG_WHOAMI 0x00
+#define QMI_REG_CTRL1 0x02
+#define QMI_REG_CTRL2 0x03
+#define QMI_REG_CTRL3 0x04
+#define QMI_REG_CTRL5 0x06
+#define QMI_REG_CTRL7 0x08
+#define QMI_REG_CTRL8 0x09
+#define QMI_REG_RST_RESULT 0x4D
+#define QMI_REG_RESET 0x60
+#define QMI_REG_AX 0x35
+#define QMI_ACC_SCALE (4.f / 32768.f)
+#define QMI_GYR_SCALE (256.f / 32768.f)
+
+#define EAR_RATE 16000
+#define EAR_FRAMES 256
+
+static i2c_master_dev_handle_t s_axp;
+static i2c_master_dev_handle_t s_qmi;
+static int s_axp_ok;
+static int s_qmi_ok;
+static int s_boot_level = 1;
+static lv_indev_t *s_indev;
+static int s_touch_down;
+static float s_touch_x;
+static float s_touch_y;
+static volatile float s_rms;
+static volatile float s_low;
+static volatile int s_have_ear;
+static int s_ear_channels;
+
+static esp_err_t reg_read(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t *data, size_t len)
+{
+    return i2c_master_transmit_receive(dev, &reg, 1, data, len, 50);
+}
+
+static esp_err_t reg_write(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t val)
+{
+    uint8_t buf[2] = {reg, val};
+
+    return i2c_master_transmit(dev, buf, sizeof(buf), 50);
+}
+
+static int add_dev(uint8_t addr, i2c_master_dev_handle_t *out)
+{
+    i2c_device_config_t cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = addr,
+        .scl_speed_hz = 400000,
+    };
+
+    return i2c_master_bus_add_device(bsp_i2c_get_handle(), &cfg, out) == ESP_OK;
+}
+
+static void axp_init(void)
+{
+    uint8_t id = 0;
+    uint8_t en = 0;
+
+    if (i2c_master_probe(bsp_i2c_get_handle(), AXP_ADDR, 50) != ESP_OK || !add_dev(AXP_ADDR, &s_axp)) {
+        ESP_LOGW(TAG, "power chip stayed quiet");
+        return;
+    }
+    if (reg_read(s_axp, AXP_REG_ID, &id, 1) != ESP_OK || id != AXP_CHIP_ID) {
+        ESP_LOGW(TAG, "power chip id 0x%02x", id);
+        return;
+    }
+    if (reg_read(s_axp, AXP_REG_INTEN2, &en, 1) == ESP_OK) {
+        en = (uint8_t)(en | AXP_PKEY_SHORT);
+        reg_write(s_axp, AXP_REG_INTEN2, en);
+    }
+    reg_write(s_axp, AXP_REG_INTSTS2, 0xFF);
+    s_axp_ok = 1;
+    ESP_LOGI(TAG, "power chip ready");
+}
+
+static int qmi_ok_id(uint8_t addr)
+{
+    uint8_t id = 0;
+
+    if (i2c_master_probe(bsp_i2c_get_handle(), addr, 50) != ESP_OK || !add_dev(addr, &s_qmi)) {
+        return 0;
+    }
+    if (reg_read(s_qmi, QMI_REG_WHOAMI, &id, 1) == ESP_OK && id == QMI_WHOAMI) {
+        return 1;
+    }
+    return 0;
+}
+
+static void qmi_init(void)
+{
+    uint8_t ctrl1 = 0;
+    uint8_t result = 0;
+    int i;
+
+    if (!qmi_ok_id(QMI_ADDR_L) && !qmi_ok_id(QMI_ADDR_H)) {
+        ESP_LOGW(TAG, "motion stayed quiet");
+        return;
+    }
+    reg_write(s_qmi, QMI_REG_RESET, 0xB0);
+    for (i = 0; i < 12; i++) {
+        vTaskDelay(pdMS_TO_TICKS(10));
+        if (reg_read(s_qmi, QMI_REG_RST_RESULT, &result, 1) == ESP_OK && result == 0x80) {
+            break;
+        }
+    }
+    if (reg_read(s_qmi, QMI_REG_CTRL1, &ctrl1, 1) != ESP_OK) {
+        ctrl1 = 0;
+    }
+    reg_write(s_qmi, QMI_REG_CTRL1, (uint8_t)(ctrl1 | 0x40));
+    reg_write(s_qmi, QMI_REG_CTRL7, 0x00);
+    reg_write(s_qmi, QMI_REG_CTRL8, 0x80);
+    reg_write(s_qmi, QMI_REG_CTRL2, 0x16);
+    reg_write(s_qmi, QMI_REG_CTRL3, 0x46);
+    reg_write(s_qmi, QMI_REG_CTRL5, 0x11);
+    reg_write(s_qmi, QMI_REG_CTRL7, 0x03);
+    vTaskDelay(pdMS_TO_TICKS(30));
+    s_qmi_ok = 1;
+    ESP_LOGI(TAG, "motion ready");
+}
+
+static int16_t s16le(const uint8_t *p)
+{
+    return (int16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+static int read_imu(glass_imu *imu)
+{
+    uint8_t raw[12];
+
+    if (!s_qmi_ok || reg_read(s_qmi, QMI_REG_AX, raw, sizeof(raw)) != ESP_OK) {
+        return 0;
+    }
+    imu->ax = (float)s16le(raw + 0) * QMI_ACC_SCALE;
+    imu->ay = (float)s16le(raw + 2) * QMI_ACC_SCALE;
+    imu->az = (float)s16le(raw + 4) * QMI_ACC_SCALE;
+    imu->gx = (float)s16le(raw + 6) * QMI_GYR_SCALE;
+    imu->gy = (float)s16le(raw + 8) * QMI_GYR_SCALE;
+    imu->gz = (float)s16le(raw + 10) * QMI_GYR_SCALE;
+    return 1;
+}
+
+static void read_power(board_sample *out)
+{
+    uint8_t status1 = 0;
+    uint8_t status2 = 0;
+    uint8_t irq = 0;
+    int charge;
+
+    if (!s_axp_ok) {
+        return;
+    }
+    if (reg_read(s_axp, AXP_REG_INTSTS2, &irq, 1) == ESP_OK && irq != 0) {
+        reg_write(s_axp, AXP_REG_INTSTS2, 0xFF);
+        if ((irq & AXP_PKEY_SHORT) && !(irq & AXP_PKEY_LONG)) {
+            out->rescue = 1;
+        }
+    }
+    if (reg_read(s_axp, AXP_REG_STATUS1, &status1, 1) != ESP_OK) {
+        return;
+    }
+    if (reg_read(s_axp, AXP_REG_STATUS2, &status2, 1) != ESP_OK) {
+        return;
+    }
+    charge = status2 & 0x07;
+    out->charging = (charge >= 1 && charge <= 4) || (status1 & 0x20) != 0;
+}
+
+void board_latch_touch(void)
+{
+    lv_point_t point;
+
+    if (s_indev == NULL) {
+        return;
+    }
+    /* The finger is sampled on the sense beat. Taking the display lock here
+     * waits out a panel flush and drops the sample. A torn point is rejected
+     * later as a teleport. */
+    lv_indev_get_point(s_indev, &point);
+    s_touch_down = lv_indev_get_state(s_indev) == LV_INDEV_STATE_PRESSED;
+    s_touch_x = (float)point.x;
+    s_touch_y = (float)point.y;
+}
+
+static void read_touch(glass_touch *touch)
+{
+    touch->down = s_touch_down;
+    touch->x = s_touch_x;
+    touch->y = s_touch_y;
+}
+
+static int open_ear(esp_codec_dev_handle_t mic)
+{
+    static const uint8_t channels[] = {2, 4, 1};
+    size_t i;
+
+    for (i = 0; i < sizeof(channels); i++) {
+        esp_codec_dev_sample_info_t fs = {
+            .bits_per_sample = 16,
+            .channel = channels[i],
+            .channel_mask = (uint16_t)((1u << channels[i]) - 1u),
+            .sample_rate = EAR_RATE,
+        };
+
+        if (esp_codec_dev_open(mic, &fs) == ESP_CODEC_DEV_OK) {
+            s_ear_channels = channels[i];
+            esp_codec_dev_set_in_gain(mic, 28.f);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void ear_features(const int16_t *raw, size_t frames, int channels)
+{
+    float lp = 0.f;
+    double energy = 0.0;
+    double low_energy = 0.0;
+    size_t i;
+    const float blend = 0.07f;
+
+    for (i = 0; i < frames; i++) {
+        float sample;
+        int32_t mixed;
+
+        if (channels == 1) {
+            mixed = raw[i];
+        } else if (channels == 4) {
+            mixed = ((int32_t)raw[i * 4] + (int32_t)raw[i * 4 + 2]) / 2;
+        } else {
+            mixed = ((int32_t)raw[i * channels] + (int32_t)raw[i * channels + 1]) / 2;
+        }
+        sample = (float)mixed / 32768.f;
+        lp += blend * (sample - lp);
+        energy += (double)sample * (double)sample;
+        low_energy += (double)lp * (double)lp;
+    }
+    if (frames == 0) {
+        return;
+    }
+    s_rms = sqrtf((float)(energy / (double)frames));
+    s_low = sqrtf((float)(low_energy / (double)frames));
+    s_have_ear = 1;
+}
+
+static void ear_task(void *arg)
+{
+    esp_codec_dev_handle_t mic = arg;
+    int16_t *raw = malloc(EAR_FRAMES * 4 * sizeof(int16_t));
+    int warned = 0;
+
+    if (raw == NULL) {
+        ESP_LOGW(TAG, "no memory for the microphones");
+        vTaskDelete(NULL);
+        return;
+    }
+    while (1) {
+        int want = EAR_FRAMES * s_ear_channels * (int)sizeof(int16_t);
+
+        if (esp_codec_dev_read(mic, raw, want) != ESP_CODEC_DEV_OK) {
+            if (!warned) {
+                ESP_LOGW(TAG, "microphone read failed");
+                warned = 1;
+            }
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+        ear_features(raw, EAR_FRAMES, s_ear_channels);
+    }
+}
+
+static void ear_init(void)
+{
+    i2s_std_config_t i2s = {
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(EAR_RATE),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+        .gpio_cfg = {
+            .mclk = BSP_I2S_MCLK,
+            .bclk = BSP_I2S_SCLK,
+            .ws = BSP_I2S_LCLK,
+            .dout = BSP_I2S_DOUT,
+            .din = BSP_I2S_DSIN,
+        },
+    };
+    esp_codec_dev_handle_t mic;
+
+    if (bsp_audio_init(&i2s) != ESP_OK) {
+        ESP_LOGW(TAG, "microphones stayed quiet");
+        return;
+    }
+    mic = bsp_audio_codec_microphone_init();
+    if (mic == NULL || !open_ear(mic)) {
+        ESP_LOGW(TAG, "microphones stayed quiet");
+        return;
+    }
+    if (xTaskCreate(ear_task, "sigrun_ear", 6144, mic, 5, NULL) != pdPASS) {
+        ESP_LOGW(TAG, "microphone task did not start");
+        return;
+    }
+    ESP_LOGI(TAG, "microphones ready (%d ch)", s_ear_channels);
+}
+
+static esp_codec_dev_handle_t s_spk;
+static volatile int s_noise;
+static volatile int s_chime;
+static int s_noise_was;
+static int s_chime_at = -1;
+
+static int16_t chime_sample(int n)
+{
+    float t = (float)n / 16000.f;
+    float atk = t < 0.05f ? t / 0.05f : 1.f;
+    float body = expf(-t * 1.05f);
+    float bloom = expf(-t * 5.5f);
+    float phase = t * 174.61f * 6.2831853f;
+    int v = (int)((sinf(phase) * body + sinf(phase * 2.01f) * bloom * 0.4f) * atk * 3000.f);
+
+    if (v > 8000) {
+        v = 8000;
+    }
+    if (v < -8000) {
+        v = -8000;
+    }
+    return (int16_t)v;
+}
+
+static int16_t noise_sample(int kind, uint32_t *rng, float *b0, float *b1, float *b2, float *brown)
+{
+    float white;
+    float drive;
+    float out;
+
+    *rng = *rng * 1664525u + 1013904223u;
+    /* High 16 bits of the generator. Filters stay on the old ±512 drive. */
+    white = (float)((int)(*rng >> 16) - 32768);
+    drive = white * (512.f / 32768.f);
+    if (kind == 2) {
+        *b0 = 0.99765f * *b0 + drive * 0.0990460f;
+        *b1 = 0.96300f * *b1 + drive * 0.2965164f;
+        *b2 = 0.57000f * *b2 + drive * 1.0526913f;
+        out = (*b0 + *b1 + *b2 + drive * 0.1848f) * 3.5f;
+    } else if (kind == 3) {
+        *brown = (*brown + drive) * 0.98f;
+        out = *brown * 1.3f;
+    } else {
+        out = white * (8000.f / 32768.f);
+    }
+    if (out > 8000.f) {
+        out = 8000.f;
+    }
+    if (out < -8000.f) {
+        out = -8000.f;
+    }
+    return (int16_t)out;
+}
+
+static void noise_task(void *arg)
+{
+    int16_t buf[256];
+    uint32_t rng = 0x51A7u;
+    float b0 = 0.f;
+    float b1 = 0.f;
+    float b2 = 0.f;
+    float brown = 0.f;
+
+    (void)arg;
+    while (1) {
+        int i;
+        int kind = s_noise;
+
+        if (s_chime) {
+            s_chime = 0;
+            s_chime_at = 0;
+        }
+        if (kind > 0) {
+            s_chime_at = -1;
+        } else if (s_chime_at >= 0) {
+            for (i = 0; i < 256; i += 2) {
+                int16_t sample = chime_sample(s_chime_at++);
+                buf[i] = sample;
+                buf[i + 1] = sample;
+            }
+            if (s_chime_at >= 48000) {
+                s_chime_at = -1;
+            }
+            if (esp_codec_dev_write(s_spk, buf, sizeof(buf)) != ESP_CODEC_DEV_OK) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+            continue;
+        }
+        if (kind <= 0) {
+            if (s_noise_was) {
+                memset(buf, 0, sizeof(buf));
+                esp_codec_dev_write(s_spk, buf, sizeof(buf));
+                s_noise_was = 0;
+            }
+            vTaskDelay(pdMS_TO_TICKS(40));
+            continue;
+        }
+        s_noise_was = 1;
+        for (i = 0; i < 256; i++) {
+            buf[i] = noise_sample(kind, &rng, &b0, &b1, &b2, &brown);
+        }
+        if (esp_codec_dev_write(s_spk, buf, sizeof(buf)) != ESP_CODEC_DEV_OK) {
+            if (s_noise_was == 1) {
+                ESP_LOGW(TAG, "speaker write failed");
+                s_noise_was = 2;
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+    }
+}
+
+static void noise_init(void)
+{
+    esp_codec_dev_sample_info_t fs = {
+        .bits_per_sample = 16,
+        .channel = 2,
+        .channel_mask = (uint16_t)(ESP_CODEC_DEV_MAKE_CHANNEL_MASK(0) | ESP_CODEC_DEV_MAKE_CHANNEL_MASK(1)),
+        .sample_rate = 16000,
+    };
+
+    s_spk = bsp_audio_codec_speaker_init();
+    if (s_spk == NULL || esp_codec_dev_open(s_spk, &fs) != ESP_CODEC_DEV_OK) {
+        ESP_LOGW(TAG, "speaker stayed quiet");
+        s_spk = NULL;
+        return;
+    }
+    esp_codec_dev_set_out_mute(s_spk, false);
+    esp_codec_dev_set_out_vol(s_spk, 90);
+    gpio_set_direction(BSP_POWER_AMP_IO, GPIO_MODE_OUTPUT);
+    gpio_set_level(BSP_POWER_AMP_IO, 1);
+    if (xTaskCreate(noise_task, "sigrun_noise", 4096, NULL, 4, NULL) != pdPASS) {
+        ESP_LOGW(TAG, "noise task did not start");
+        return;
+    }
+    ESP_LOGI(TAG, "soft noise ready");
+}
+
+void board_chime(void)
+{
+    if (s_spk != NULL) {
+        s_chime = 1;
+    }
+}
+
+void board_noise(int kind)
+{
+    if (s_spk == NULL || kind < 0) {
+        s_noise = 0;
+        return;
+    }
+    s_noise = kind > 3 ? 3 : kind;
+}
+
+static int boot_edge(void)
+{
+    int now = gpio_get_level(BOOT_GPIO);
+    int edge = s_boot_level == 1 && now == 0;
+
+    s_boot_level = now;
+    return edge;
+}
+
+void board_init(void)
+{
+    gpio_config_t io = {
+        .pin_bit_mask = 1ULL << BOOT_GPIO,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_ENABLE,
+        .pull_down_en = GPIO_PULLDOWN_DISABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+
+    ESP_ERROR_CHECK(gpio_config(&io));
+    s_boot_level = gpio_get_level(BOOT_GPIO);
+    s_indev = bsp_display_get_input_dev();
+    axp_init();
+    qmi_init();
+    ear_init();
+    noise_init();
+}
+
+void board_read(board_sample *out)
+{
+    memset(out, 0, sizeof(*out));
+    board_latch_touch();
+    out->rescue = boot_edge();
+    read_power(out);
+    out->have_imu = read_imu(&out->imu);
+    read_touch(&out->touch);
+    out->have_ear = s_have_ear;
+    out->ear.rms = s_rms;
+    out->ear.low = s_low;
+}

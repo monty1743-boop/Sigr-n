@@ -28,13 +28,20 @@ typedef struct {
     float warmth;
     float disk;
     float sway;
+    float sway_y;
     float gather;
     float bead;
     float bead_angle;
+    int bead_free;
+    float bead_x;
+    float bead_y;
     float light_angle;
     float arc;
     float marks;
     float marks_lit;
+    int numeral;
+    float numeral_light;
+    float lamp;
 } glass_look;
 
 void glass_look_clear(glass_look *out);
@@ -63,6 +70,8 @@ typedef struct {
     int walking;
     int swaying;
     float sway;
+    float rock_x;
+    float rock_y;
     float finger_period;
     int finger_down;
     int room_quiet;
@@ -74,6 +83,12 @@ typedef struct {
     int list_left;
     int has_task;
     uint32_t task_ms;
+    int tap;
+    int hold;
+    float tap_x;
+    int bead_grab;
+    float bead_x;
+    float bead_y;
 } glass_sense;
 
 typedef struct {
@@ -89,11 +104,83 @@ typedef struct {
     int task_running;
     uint32_t task_left_ms;
     glass_look look;
+    int card;
+    int list_set;
+    uint32_t task_set_ms;
+    int word;
+    int noise;
+    int task_armed;
+    uint32_t task_end_ms;
+    int numeral;
+    uint32_t numeral_ms;
+    float sway_px;
+    float sway_py;
 } sigrun;
 
 void sigrun_init(sigrun *s);
 void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms);
 
-void glass_render_init(void);
-void glass_render(float *acc, const glass_look *look, uint32_t ms, float dt);
-void glass_quantize(const float *acc, uint16_t *rgb565, uint8_t *rgb888);
+void glass_look_ease(glass_look *drawn, const glass_look *goal, uint32_t dt_ms);
+void glass_paint(uint16_t *rgb565, uint8_t *heat, const glass_look *look);
+
+typedef struct {
+    float ax, ay, az;
+    float gx, gy, gz;
+} glass_imu;
+
+typedef struct {
+    int down;
+    float x, y;
+} glass_touch;
+
+typedef struct {
+    float rms;
+    float low;
+} glass_ear;
+
+typedef struct {
+    float grav[3];
+    float lean[3];
+    int primed;
+    int axis;
+    int rising;
+    float axis_s;
+    float peak;
+    uint32_t since_peak;
+    uint32_t gaps[3];
+    int gap_n;
+    uint32_t quiet_ms;
+    uint32_t up_ms;
+    float fidget;
+    float sway_amp;
+    float sway_lp;
+    float tilt_x;
+    float tilt_y;
+    int sway_on;
+    int down_was;
+    int hold_sent;
+    uint32_t down_ms;
+    float down_x;
+    float down_y;
+    float last_x;
+    float last_y;
+    float bx;
+    float by;
+    float bvx;
+    float bvy;
+    int grabbed;
+    int on_bead;
+    int have_bead;
+    uint32_t alone_ms;
+    float ang;
+    int have_ang;
+    float omega;
+    float noise;
+    int noise_primed;
+    float env;
+} glass_body;
+
+void glass_body_init(glass_body *b);
+void glass_body_imu(glass_body *b, const glass_imu *imu, uint32_t dt_ms, glass_sense *out);
+void glass_body_touch(glass_body *b, const glass_touch *touch, uint32_t dt_ms, glass_sense *out);
+void glass_body_ear(glass_body *b, const glass_ear *ear, uint32_t dt_ms, glass_sense *out);

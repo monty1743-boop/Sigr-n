@@ -2,7 +2,7 @@ CC ?= gcc
 CFLAGS ?= -O2 -std=c11 -Wall -Wextra -I../src
 LDFLAGS ?= -lm
 
-SRCS = preview.c ../src/glass_picture.c ../src/glass_render.c ../src/glass_logic.c
+SRCS = preview.c ../src/glass_picture.c ../src/glass_paint.c ../src/glass_logic.c ../src/glass_body.c
 
 .PHONY: all test clean
 
