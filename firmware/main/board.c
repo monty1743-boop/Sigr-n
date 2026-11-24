@@ -393,12 +393,20 @@ static int16_t tick_sample(int n)
 static int16_t chime_sample(int n)
 {
     float t = (float)n / 16000.f;
-    float atk = t < 0.008f ? t / 0.008f : 1.f;
-    float body = expf(-t * 1.4f);
-    float bloom = expf(-t * 6.f);
-    float tone = sinf(t * 880.f * 6.2831853f) * body + sinf(t * 1760.f * 6.2831853f) * bloom * 0.35f;
+    float u = t < 0.45f ? t / 0.45f : 1.f;
+    float swell = u * u * (3.f - 2.f * u);
+    float body = expf(-t * 1.15f);
+    float bloom = expf(-t * 4.5f);
+    float tone = sinf(t * 880.f * 6.2831853f) * body + sinf(t * 1760.f * 6.2831853f) * bloom * 0.28f;
+    int v = (int)(tone * swell * 5200.f);
 
-    return mix_clamp(tone * atk * 5200.f, thump(t, n));
+    if (v > 5200) {
+        v = 5200;
+    }
+    if (v < -5200) {
+        v = -5200;
+    }
+    return (int16_t)v;
 }
 
 static void speaker_vol(int vol)

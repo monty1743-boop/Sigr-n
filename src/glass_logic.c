@@ -38,15 +38,15 @@ static void show_mode(sigrun *s)
     s->look.arc = 0.f;
     s->look.disk = 0.f;
     if (s->card == 1) {
+        s->look.disk = 0.34f;
+    } else if (s->card == 2) {
+        s->look.disk = 0.66f;
+    } else if (s->card == 3) {
+        s->look.disk = 1.f;
+    } else if (s->card == 4) {
         s->look.gather = 0.f;
         s->look.warmth = 0.f;
         s->look.mote = s->tick_ms < 120u ? 1.f : 0.12f;
-    } else if (s->card == 2) {
-        s->look.disk = 0.34f;
-    } else if (s->card == 3) {
-        s->look.disk = 0.66f;
-    } else if (s->card == 4) {
-        s->look.disk = 1.f;
     } else if (s->card == 5) {
         s->look.mote = 0.95f;
         s->look.gather = 0.f;
@@ -67,7 +67,7 @@ static void show_mode(sigrun *s)
 static void choose_mode(sigrun *s)
 {
     static const int kinds[] = {0, 0, 0, 0, 0, 1, 2, 3};
-    static const uint32_t tasks[] = {0u, 0u, 300000u, 600000u, 1500000u, 0u, 0u, 0u};
+    static const uint32_t tasks[] = {0u, 300000u, 600000u, 1500000u, 0u, 0u, 0u, 0u};
 
     s->card = wrap_i(s->card + 1, 8);
     s->noise = kinds[s->card];
@@ -78,13 +78,13 @@ static void choose_mode(sigrun *s)
     s->task_end_ms = 0;
     s->numeral = 0;
     s->numeral_ms = 0;
-    if (s->card == 2) {
+    if (s->card == 1) {
         s->numeral = 5;
         s->numeral_ms = 1;
-    } else if (s->card == 3) {
+    } else if (s->card == 2) {
         s->numeral = 10;
         s->numeral_ms = 1;
-    } else if (s->card == 4) {
+    } else if (s->card == 3) {
         s->numeral = 25;
         s->numeral_ms = 1;
     }
@@ -146,13 +146,14 @@ static void apply_modifiers(sigrun *s, const glass_sense *in, uint32_t dt_ms)
         s->look.numeral_light = light;
     }
     if (s->task_set_ms > 0u) {
-        float icon = s->card == 2 ? 0.34f : (s->card == 3 ? 0.66f : 1.f);
+        float icon = s->card == 1 ? 0.34f : (s->card == 2 ? 0.66f : 1.f);
         if (s->task_end_ms > 0) {
             float t = (float)s->task_end_ms;
             float u;
             float lamp;
-            if (t < 1000.f) {
-                u = t / 1000.f;
+            if (t < 450.f) {
+                u = t / 450.f;
+                u = u * u * (3.f - 2.f * u);
                 lamp = u;
             } else if (t < 1600.f) {
                 u = 1.f;
@@ -245,7 +246,7 @@ void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms)
         ending = 0;
         numbering = 0;
     }
-    s->tick = s->card == 1 ? 1 : 0;
+    s->tick = s->card == 4 ? 1 : 0;
     if (!s->tick || !was_tick) {
         s->tick_ms = 0;
     } else {

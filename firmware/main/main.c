@@ -19,6 +19,7 @@ static glass_look s_pub;
 static sigrun_scene s_scene;
 static sigrun_source s_source;
 static volatile uint32_t s_frame_ms;
+static volatile int s_finger;
 static glass_sense s_sense;
 
 static const char *scene_name(sigrun_scene scene)
@@ -86,6 +87,7 @@ static void sense_task(void *arg)
         }
 
         board_read(&sample);
+        s_finger = sample.touch.down;
         memset(&s_sense, 0, sizeof(s_sense));
         s_sense.now_ms = now;
         s_sense.rescue = sample.rescue;
@@ -173,15 +175,74 @@ void app_main(void)
 
     static glass_look shown;
     static uint32_t pace_ms = 16;
+    static uint32_t idle_ms = 0;
+    static uint32_t panel_ms = 0;
+    static float cover = 1.f;
+    static int asleep = 0;
+    static int bright = 35;
 
     while (1) {
         glass_look look;
         uint32_t started;
         uint32_t frame_dt;
+        uint32_t now;
+        uint32_t dt;
+        int touched;
+        int normal;
+        int next;
+
+        now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+        dt = panel_ms == 0 ? 0 : now - panel_ms;
+        if (dt > 200u) {
+            dt = 200u;
+        }
+        panel_ms = now;
+        touched = s_finger;
+        if (touched) {
+            idle_ms = 0;
+            asleep = 0;
+            cover += (float)dt / 900.f;
+            if (cover > 1.f) {
+                cover = 1.f;
+            }
+        } else if (cover >= 1.f) {
+            idle_ms += dt;
+            if (idle_ms >= 3600000u) {
+                idle_ms = 3600000u;
+            }
+        }
+        if (!touched && idle_ms >= 3600000u && cover > 0.f) {
+            cover -= (float)dt / 900.f;
+            if (cover <= 0.f) {
+                cover = 0.f;
+                asleep = 1;
+            }
+        }
 
         portENTER_CRITICAL(&s_mux);
         look = s_pub;
         portEXIT_CRITICAL(&s_mux);
+
+        normal = 35 + (int)(look.lamp * 65.f + 0.5f);
+        if (normal > 100) {
+            normal = 100;
+        }
+        next = (int)((float)normal * cover + 0.5f);
+        if (next < 0) {
+            next = 0;
+        }
+
+        if (asleep) {
+            if (bsp_display_lock(120) == ESP_OK) {
+                if (next != bright) {
+                    bsp_display_brightness_set(next);
+                    bright = next;
+                }
+                bsp_display_unlock();
+            }
+            vTaskDelay(pdMS_TO_TICKS(40));
+            continue;
+        }
 
         started = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         glass_look_ease(&shown, &look, pace_ms);
@@ -194,13 +255,8 @@ void app_main(void)
         }
 
         if (bsp_display_lock(120) == ESP_OK) {
-            static int bright = 35;
-            int next = 35 + (int)(look.lamp * 65.f + 0.5f);
             lv_draw_buf_t *buf = lv_canvas_get_draw_buf(canvas);
 
-            if (next > 100) {
-                next = 100;
-            }
             if (next != bright) {
                 bsp_display_brightness_set(next);
                 bright = next;
