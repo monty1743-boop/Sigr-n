@@ -335,25 +335,79 @@ static void ear_init(void)
 static esp_codec_dev_handle_t s_spk;
 static volatile int s_noise;
 static volatile int s_chime;
+static volatile int s_tick;
 static int s_noise_was;
 static int s_chime_at = -1;
+static int s_tick_on;
+static int s_tick_at;
+static int s_vol = -1;
+static int s_vol_noise = 73;
+static int s_vol_hit = 100;
+
+static int16_t mix_clamp(float a, float b)
+{
+    int v = (int)(a + b);
+
+    if (v > 32767) {
+        v = 32767;
+    }
+    if (v < -32767) {
+        v = -32767;
+    }
+    return (int16_t)v;
+}
+
+static float thump(float t, int n)
+{
+    float atk;
+    float rel;
+
+    if (n >= 360) {
+        return 0.f;
+    }
+    atk = t < 0.002f ? t / 0.002f : 1.f;
+    rel = n > 280 ? (360 - n) / 80.f : 1.f;
+    return sinf(t * 140.f * 6.2831853f) * atk * rel * 32767.f;
+}
+
+static int16_t tick_sample(int n)
+{
+    float t;
+    float atk;
+    float env;
+    float click;
+
+    if (n >= 360) {
+        return 0;
+    }
+    t = (float)n / 16000.f;
+    click = 0.f;
+    if (n < 192) {
+        atk = t < 0.001f ? t / 0.001f : 1.f;
+        env = atk * expf(-t / 0.0032f);
+        click = cosf(t * 2000.f * 6.2831853f) * env * 3700.f;
+    }
+    return mix_clamp(click, thump(t, n));
+}
 
 static int16_t chime_sample(int n)
 {
     float t = (float)n / 16000.f;
-    float atk = t < 0.05f ? t / 0.05f : 1.f;
-    float body = expf(-t * 1.05f);
-    float bloom = expf(-t * 5.5f);
-    float phase = t * 174.61f * 6.2831853f;
-    int v = (int)((sinf(phase) * body + sinf(phase * 2.01f) * bloom * 0.4f) * atk * 3000.f);
+    float atk = t < 0.008f ? t / 0.008f : 1.f;
+    float body = expf(-t * 1.4f);
+    float bloom = expf(-t * 6.f);
+    float tone = sinf(t * 880.f * 6.2831853f) * body + sinf(t * 1760.f * 6.2831853f) * bloom * 0.35f;
 
-    if (v > 8000) {
-        v = 8000;
+    return mix_clamp(tone * atk * 5200.f, thump(t, n));
+}
+
+static void speaker_vol(int vol)
+{
+    if (s_spk == NULL || vol == s_vol) {
+        return;
     }
-    if (v < -8000) {
-        v = -8000;
-    }
-    return (int16_t)v;
+    esp_codec_dev_set_out_vol(s_spk, vol);
+    s_vol = vol;
 }
 
 static int16_t noise_sample(int kind, uint32_t *rng, float *b0, float *b1, float *b2, float *brown)
@@ -404,6 +458,14 @@ static void noise_task(void *arg)
             s_chime = 0;
             s_chime_at = 0;
         }
+        if (s_tick && !s_tick_on) {
+            s_tick_on = 1;
+            s_tick_at = 0;
+        }
+        if (!s_tick) {
+            s_tick_on = 0;
+        }
+        speaker_vol((kind <= 0 && (s_chime_at >= 0 || s_tick_on || s_chime)) ? s_vol_hit : s_vol_noise);
         if (kind > 0) {
             s_chime_at = -1;
         } else if (s_chime_at >= 0) {
@@ -414,6 +476,19 @@ static void noise_task(void *arg)
             }
             if (s_chime_at >= 48000) {
                 s_chime_at = -1;
+            }
+            if (esp_codec_dev_write(s_spk, buf, sizeof(buf)) != ESP_CODEC_DEV_OK) {
+                vTaskDelay(pdMS_TO_TICKS(20));
+            }
+            continue;
+        } else if (s_tick_on) {
+            for (i = 0; i < 256; i += 2) {
+                int16_t sample = tick_sample(s_tick_at++);
+                if (s_tick_at >= 16000) {
+                    s_tick_at = 0;
+                }
+                buf[i] = sample;
+                buf[i + 1] = sample;
             }
             if (esp_codec_dev_write(s_spk, buf, sizeof(buf)) != ESP_CODEC_DEV_OK) {
                 vTaskDelay(pdMS_TO_TICKS(20));
@@ -459,7 +534,22 @@ static void noise_init(void)
         return;
     }
     esp_codec_dev_set_out_mute(s_spk, false);
-    esp_codec_dev_set_out_vol(s_spk, 90);
+    {
+        esp_codec_dev_vol_map_t map[2] = {
+            {.vol = 0, .db_value = -50.f},
+            {.vol = 100, .db_value = 12.f},
+        };
+        esp_codec_dev_vol_curve_t curve = {
+            .vol_map = map,
+            .count = 2,
+        };
+
+        if (esp_codec_dev_set_vol_curve(s_spk, &curve) != ESP_CODEC_DEV_OK) {
+            s_vol_noise = 90;
+            s_vol_hit = 100;
+        }
+    }
+    speaker_vol(s_vol_noise);
     gpio_set_direction(BSP_POWER_AMP_IO, GPIO_MODE_OUTPUT);
     gpio_set_level(BSP_POWER_AMP_IO, 1);
     if (xTaskCreate(noise_task, "sigrun_noise", 4096, NULL, 4, NULL) != pdPASS) {
@@ -467,6 +557,11 @@ static void noise_init(void)
         return;
     }
     ESP_LOGI(TAG, "soft noise ready");
+}
+
+void board_tick(int on)
+{
+    s_tick = (s_spk != NULL && on) ? 1 : 0;
 }
 
 void board_chime(void)

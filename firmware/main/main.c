@@ -111,6 +111,7 @@ static void sense_task(void *arg)
         s_source = glass.source;
         portEXIT_CRITICAL(&s_mux);
         board_noise(glass.noise);
+        board_tick(glass.tick);
 
         if ((now - logged) >= 2000u) {
             logged = now;

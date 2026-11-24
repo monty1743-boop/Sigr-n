@@ -16,4 +16,5 @@ void board_init(void);
 void board_latch_touch(void);
 void board_read(board_sample *out);
 void board_noise(int kind);
+void board_tick(int on);
 void board_chime(void);

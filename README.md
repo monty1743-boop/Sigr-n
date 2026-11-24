@@ -21,13 +21,13 @@ I2C is GPIO14 SCL and GPIO15 SDA. The sense loop is 20 ms. A painted frame is ab
 
 A short press of PWR or BOOT advances one card, on the charger or off it:
 
-`quiet → 5 min → 10 min → 25 min → white → pink → brown → quiet`
+`quiet → tick → 5 min → 10 min → 25 min → white → pink → brown → quiet`
 
-The picture is the mode. A moon is a task. A bright arc is white noise, a warmer arc is pink, a heavy warm ring is brown. Quiet is a plain breath. Noise and a task are exclusive. The speaker is silent in quiet.
+The picture is the mode. A tick is one click a second, and the mote flashes with it. A moon is a task. A bright arc is white noise, a warmer arc is pink, a heavy warm ring is brown. Quiet is a plain breath. Noise, the tick, and a task are exclusive. The speaker is silent in quiet.
 
 On the charger a moon is armed and does not count. Off the charger it starts on that press, or when unplugged. The lit fraction is time left over the chosen length, scaled by 0.34, 0.66, or 1. One second after the press the digits 5, 10, or 25 are drawn for about 2 s, then fade in 0.4 s.
 
-At zero the moon opens again, panel brightness rises from 35 to 100, and one decaying note plays (174 Hz plus a short octave). Brightness falls back to 35 and the card returns to quiet.
+At zero the moon opens again, panel brightness rises from 35 to 100, and one decaying note plays, with a short low pulse in the hand. Brightness falls back to 35 and the card returns to quiet.
 
 Breath source, first match: a finger trace while unplugged and not holding the bead (period at least 7.5 s), else walking at 5.6 s, else sway at 10 s, else a close breath in a quiet room, else a 10 s clock. A finger held at the bottom of the exhale waits there. Rest radius is 118 px, full is 206 px. Past radius 168 the stroke thickens, and it is about twice as wide at 206.
 
@@ -40,8 +40,9 @@ flowchart TD
   press["PWR short or BOOT"] --> card["Next card"]
   card --> kind{"Card"}
   kind -->|"0"| quiet["Quiet breath"]
-  kind -->|"1, 2, 3"| moon["Moon: 5, 10, or 25 min"]
-  kind -->|"4, 5, 6"| noise["White, pink, or brown"]
+  kind -->|"1"| beat["One tick each second"]
+  kind -->|"2, 3, 4"| moon["Moon: 5, 10, or 25 min"]
+  kind -->|"5, 6, 7"| noise["White, pink, or brown"]
   moon --> digits["After 1 s, draw 5, 10, or 25 for 2 s"]
   moon --> power{"Charger"}
   power -->|"plugged"| armed["Armed icon, no countdown"]

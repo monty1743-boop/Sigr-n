@@ -111,6 +111,8 @@ typedef struct {
     int noise;
     int task_armed;
     uint32_t task_end_ms;
+    int tick;
+    uint32_t tick_ms;
     int numeral;
     uint32_t numeral_ms;
     float sway_px;

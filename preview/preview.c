@@ -198,14 +198,18 @@ static void run_tests(void)
     in.rescue = 1;
     in.now_ms = 8000;
     sigrun_step(&s, &in, 16);
-    expect(s.scene == SIGRUN_TIDE && s.task_set_ms == 300000u && s.noise == 0, "a press selects the short moon off the charger");
+    expect(s.scene == SIGRUN_TIDE && s.tick == 1 && s.noise == 0 && s.task_set_ms == 0u, "a press selects the tick off the charger");
+    expect(s.tick_ms == 0u && s.look.mote > 0.8f, "the tick starts on the beat");
     in.rescue = 0;
     in.now_ms += 16;
-    sigrun_step(&s, &in, 16);
+    sigrun_step(&s, &in, 200);
+    expect(s.tick_ms == 200u && s.look.mote < 0.3f, "the mote rests between ticks");
+    sigrun_step(&s, &in, 800);
+    expect(s.tick_ms == 0u && s.look.mote > 0.8f, "the tick returns after one second");
     in.rescue = 1;
     in.now_ms += 16;
     sigrun_step(&s, &in, 16);
-    expect(s.task_set_ms == 600000u && s.catalog == 0, "another press selects the ten minute moon");
+    expect(s.task_set_ms == 300000u && s.catalog == 0, "another press selects the short moon");
 
     sigrun_init(&s);
     in = sense_clear();
@@ -425,7 +429,14 @@ static void run_hand_tests(void)
     sigrun_step(&s, &in, 20);
     in.rescue = 1;
     sigrun_step(&s, &in, 20);
-    expect(s.task_set_ms == 300000u && s.look.disk > 0.3f && s.look.disk < 0.5f, "a press selects the short moon");
+    expect(s.card == 1 && s.tick == 1 && s.noise == 0 && s.look.mote > 0.8f, "a press selects the tick");
+    in.rescue = 0;
+    in.now_ms += 20;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 1;
+    in.now_ms += 20;
+    sigrun_step(&s, &in, 20);
+    expect(s.task_set_ms == 300000u && s.look.disk > 0.3f && s.look.disk < 0.5f, "the next press selects the short moon");
     in.rescue = 0;
     in.now_ms += 20;
     sigrun_step(&s, &in, 20);
@@ -468,7 +479,7 @@ static void run_hand_tests(void)
 
     sigrun_init(&s);
     in = sense_clear();
-    s.card = 3;
+    s.card = 4;
     s.task_set_ms = 1000u;
     s.task_armed = 1;
     sigrun_step(&s, &in, 20);
@@ -484,9 +495,10 @@ static void run_hand_tests(void)
     sigrun_init(&s);
     in = sense_clear();
     in.charging = 1;
+    s.card = 1;
     in.rescue = 1;
     sigrun_step(&s, &in, 20);
-    expect(s.card == 1 && s.numeral == 5 && s.look.numeral == 0, "five waits a second");
+    expect(s.card == 2 && s.numeral == 5 && s.look.numeral == 0, "five waits a second");
     in.rescue = 0;
     sigrun_step(&s, &in, 1000);
     expect(s.look.numeral == 5 && s.look.numeral_light > 0.9f, "five is shown");
