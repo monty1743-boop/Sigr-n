@@ -42,6 +42,8 @@ typedef struct {
     int numeral;
     float numeral_light;
     float lamp;
+    float rune;
+    float cell;
 } glass_look;
 
 void glass_look_clear(glass_look *out);
@@ -72,6 +74,8 @@ typedef struct {
     float sway;
     float rock_x;
     float rock_y;
+    float grav_x;
+    float grav_y;
     float finger_period;
     int finger_down;
     int room_quiet;
@@ -80,6 +84,7 @@ typedef struct {
     float fidget;
     float still;
     int charging;
+    float cell;
     int list_left;
     int has_task;
     uint32_t task_ms;
@@ -113,10 +118,13 @@ typedef struct {
     uint32_t task_end_ms;
     int tick;
     uint32_t tick_ms;
+    uint32_t boot_ms;
     int numeral;
     uint32_t numeral_ms;
     float sway_px;
     float sway_py;
+    float sway_vx;
+    float sway_vy;
 } sigrun;
 
 void sigrun_init(sigrun *s);

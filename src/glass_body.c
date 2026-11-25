@@ -14,6 +14,13 @@ static float clampf(float v, float lo, float hi)
     return v;
 }
 
+static void screen_grav(float ax, float ay, float *sx, float *sy)
+{
+    /* This panel's tilt demo moves X with accel Y and Y with accel X. */
+    *sx = ay;
+    *sy = ax;
+}
+
 static float rock_axis(float g)
 {
     float a = fabsf(g);
@@ -185,15 +192,38 @@ void glass_body_imu(glass_body *b, const glass_imu *imu, uint32_t dt_ms, glass_s
     out->walking = walking;
     out->swaying = b->sway_on;
     out->sway = b->sway_lp;
-    out->rock_x = rock_axis(b->tilt_x);
-    out->rock_y = rock_axis(b->tilt_y);
+    {
+        float sx;
+        float sy;
+
+        screen_grav(b->tilt_x, b->tilt_y, &sx, &sy);
+        out->rock_x = rock_axis(sx);
+        out->rock_y = rock_axis(sy);
+        out->grav_x = sx;
+        out->grav_y = sy;
+    }
     out->still = clampf(still, 0.f, 1.f);
     out->fidget = clampf(b->fidget, 0.f, 1.f);
 }
 
-static void bead_keep_in(glass_body *b)
+static float upright_of(float gx, float gy)
+{
+    float m = sqrtf(gx * gx + gy * gy);
+    float t = (m - 0.55f) / (0.92f - 0.55f);
+
+    if (t < 0.f) {
+        t = 0.f;
+    }
+    if (t > 1.f) {
+        t = 1.f;
+    }
+    return t * t * (3.f - 2.f * t);
+}
+
+static void bead_keep_in(glass_body *b, float upright)
 {
     int n;
+    float give = upright > 0.5f ? 1.22f : 1.45f;
 
     for (n = 0; n < 2; n++) {
         float d = sqrtf(b->bx * b->bx + b->by * b->by);
@@ -209,8 +239,12 @@ static void bead_keep_in(glass_body *b)
         ny = b->by / d;
         vn = b->bvx * nx + b->bvy * ny;
         if (vn > 0.f) {
-            b->bvx -= 1.45f * vn * nx;
-            b->bvy -= 1.45f * vn * ny;
+            b->bvx -= give * vn * nx;
+            b->bvy -= give * vn * ny;
+        }
+        if (upright > 0.5f) {
+            b->bvx *= 0.82f;
+            b->bvy *= 0.82f;
         }
         b->bx = nx * lim;
         b->by = ny * lim;
@@ -274,6 +308,12 @@ static void bead_step(glass_body *b, const glass_touch *touch, uint32_t dt_ms, g
         out->bead_grab = 1;
     } else {
         float pull = 0.f;
+        float gx;
+        float gy;
+        float upright;
+
+        screen_grav(b->tilt_x, b->tilt_y, &gx, &gy);
+        upright = upright_of(gx, gy);
 
         b->grabbed = 0;
         if (b->alone_ms < 1000u) {
@@ -281,16 +321,19 @@ static void bead_step(glass_body *b, const glass_touch *touch, uint32_t dt_ms, g
         } else {
             pull = 1.f;
         }
+        b->bvx += gx * 2200.f * upright * dt;
+        b->bvy += gy * 2200.f * upright * dt;
         if (pull > 0.f) {
-            b->bvx += (-7.5f * b->bx - 4.8f * b->bvx) * dt;
-            b->bvy += (-7.5f * b->by - 4.8f * b->bvy) * dt;
+            float home_k = 7.5f * (1.f - upright);
+            b->bvx += (-home_k * b->bx - 4.8f * b->bvx) * dt;
+            b->bvy += (-home_k * b->by - 4.8f * b->bvy) * dt;
         }
         b->bx += b->bvx * dt;
         b->by += b->bvy * dt;
         b->bvx *= expf(-0.55f * dt);
         b->bvy *= expf(-0.55f * dt);
-        bead_keep_in(b);
-        if (b->alone_ms >= 1000u) {
+        bead_keep_in(b, upright);
+        if (b->alone_ms >= 1000u && upright < 0.2f) {
             float home = b->bx * b->bx + b->by * b->by;
             float speed = b->bvx * b->bvx + b->bvy * b->bvy;
             if (home < 16.f && speed < 80.f) {

@@ -166,6 +166,37 @@ static void run_body_tests(void)
     expect(!sense.room_quiet, "a loud room stays on the clock");
     expect(sense.near_breath < 0.05f, "a loud room is not a breath");
     expect(sense.hum < 0.05f, "a loud room is not warm");
+
+    glass_body_init(&body);
+    memset(&touch, 0, sizeof(touch));
+    memset(&imu, 0, sizeof(imu));
+    imu.ay = 1.f;
+    for (i = 0; i < 40; i++) {
+        glass_body_imu(&body, &imu, 20, &sense);
+    }
+    expect(sense.grav_x > 0.7f && fabsf(sense.grav_y) < 0.2f, "accel Y is screen X");
+    for (i = 0; i < 80; i++) {
+        glass_body_imu(&body, &imu, 20, &sense);
+        glass_body_touch(&body, &touch, 20, &sense);
+    }
+    expect(body.bx > 160.f, "an upright glass lets the bead settle with gravity");
+    imu.ay = 0.f;
+    imu.ax = 1.f;
+    for (i = 0; i < 40; i++) {
+        glass_body_imu(&body, &imu, 20, &sense);
+        glass_body_touch(&body, &touch, 20, &sense);
+    }
+    expect(sense.grav_y > 0.7f && body.by > 80.f, "accel X is screen Y");
+    imu.ax = 0.f;
+    imu.az = 1.f;
+    for (i = 0; i < 40; i++) {
+        glass_body_imu(&body, &imu, 20, &sense);
+    }
+    for (i = 0; i < 140; i++) {
+        glass_body_imu(&body, &imu, 20, &sense);
+        glass_body_touch(&body, &touch, 20, &sense);
+    }
+    expect(fabsf(body.by) < 20.f, "face up, the bead returns");
 }
 
 static void run_tests(void)
@@ -173,6 +204,28 @@ static void run_tests(void)
     sigrun s;
     glass_sense in;
     int i;
+
+    sigrun_init(&s);
+    in = sense_clear();
+    sigrun_step(&s, &in, 20);
+    expect(s.look.rune > 0.f && s.look.rune < 0.2f, "power-on starts the rune dim");
+    sigrun_step(&s, &in, 2480);
+    expect(s.boot_ms == 2500u && s.look.rune > 0.99f, "the rune finishes at full brightness");
+    sigrun_step(&s, &in, 20);
+    expect(s.look.rune == 0.f, "the rune is gone after 2.5 seconds");
+
+    sigrun_init(&s);
+    in = sense_clear();
+    in.grav_y = 1.f;
+    for (i = 0; i < 60; i++) {
+        sigrun_step(&s, &in, 20);
+    }
+    expect(s.look.sway_y > 60.f, "an upright glass lets the ring rest low");
+    in.grav_y = 0.f;
+    for (i = 0; i < 40; i++) {
+        sigrun_step(&s, &in, 20);
+    }
+    expect(fabsf(s.look.sway_y) < 12.f, "face up, the ring returns");
 
     sigrun_init(&s);
     in = sense_clear();
@@ -560,6 +613,11 @@ static void run_paint_tests(void)
     look.radius = 120.f;
     glass_paint(px, heat, &look);
     expect(px[145 * GLASS_W + 233] != 0, "a five is drawn");
+    glass_look_clear(&look);
+    look.rune = 1.f;
+    look.radius = 120.f;
+    glass_paint(px, heat, &look);
+    expect(px[178 * GLASS_W + 240] != 0, "a sowilo is drawn");
     free(px);
     free(heat);
 }

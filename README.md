@@ -15,9 +15,11 @@ Pocket breath glass on a Waveshare ESP32-S3-Touch-AMOLED-1.75C. One 466×466 pic
 | AXP2101 | PMIC, I2C 0x34. Short press is a mode step. Long press is power-off |
 | GPIO0 | BOOT. Short press is the same mode step |
 
-I2C is GPIO14 SCL and GPIO15 SDA. The sense loop is 20 ms. A painted frame is about 60–80 ms.
+I2C is GPIO14 SCL and GPIO15 SDA. The sense loop is 20 ms. A painted frame is about 50–60 ms.
 
 ## Behavior
+
+Power-on draws one Sowilo and raises the panel from dark to brightness 100 over 2.5 s. Then the mark is gone and the breath continues at 35.
 
 A short press of PWR or BOOT advances one card, on the charger or off it:
 
@@ -29,11 +31,11 @@ On the charger a moon is armed and does not count. Off the charger it starts on 
 
 At zero the moon opens again and the panel rises from 35 to 100 over about half a second. The end note swells over the same half second, then decays. Brightness falls back to 35 and the card returns to quiet.
 
-An hour with no touch on the glass fades the panel from its current brightness down to 0 over 0.9 s and stops painting. The touch reader keeps running. A touch brings the panel back up to its normal brightness over the same 0.9 s and painting resumes.
+An hour with no touch and no press of PWR or BOOT turns the board off through the power chip. Press PWR to turn it back on. A long press of PWR still turns it off immediately.
 
 Breath source, first match: a finger trace while unplugged and not holding the bead (period at least 7.5 s), else walking at 5.6 s, else sway at 10 s, else a close breath in a quiet room, else a 10 s clock. A finger held at the bottom of the exhale waits there. Rest radius is 118 px, full is 206 px. Past radius 168 the stroke thickens, and it is about twice as wide at 206.
 
-Tilt moves the picture, dead zone 0.02 g, full travel ±42 px by about 0.17 g. The bead can be flicked, bounces inside r=202, waits 1 s, then springs home. Color is teal. Warmth, from room level or the pink and brown cards, shifts it toward gold.
+Held face-up, or flat on a table, tilt still shifts the picture by up to ±42 px. Turn the glass toward a face and both the ring and the bead fall to the low edge, bounce once, and settle. Angles between those blend. The bead can be flicked, bounces inside r=202, waits 1 s, then springs home while the glass is face-up. Color is teal. Warmth, from room level or the pink and brown cards, shifts it toward gold.
 
 ## Logic
 
@@ -91,17 +93,19 @@ Stills from the host painter are in `docs/proof/`.
 
 ## Battery
 
-The included cell is a 702530 lithium polymer, 3.7 V, 500 mAh, 1.85 Wh (SKU 33691). Nothing below was measured on this unit. Wi-Fi and Bluetooth are not started. The CPU stays at 240 MHz. After the screen sleeps, painting stops and the panel is at brightness 0, but the chip, the microphones, and the motion sensor stay awake. A long press of PWR is what actually turns the board off.
+The included cell is a 702530 lithium polymer, 3.7 V, 500 mAh, 1.85 Wh (SKU 33691). Nothing below was measured on this unit. Wi-Fi and Bluetooth are not started. The core runs at 160 MHz. The speaker amplifier is on only while a tick, a noise, or the end note is playing. An hour with no touch and no button press, and a long press of PWR, both tell the power chip to turn every rail off except its clock. Press PWR to turn it back on.
+
+Below about 3.7 V the ring simply breathes a little quieter. It does not flash or change color. On the charger it stays at the normal level.
 
 | Use | Estimate from a full charge |
 | --- | --- |
-| Screen on, quiet breath | 4–6 h |
+| Screen on, quiet breath | about 4–5 h |
 | Screen on, tick | 4–5 h |
 | Screen on, noise | 3–4.5 h |
-| Left on, screen asleep after an hour | 8–14 h |
-| A normal day, powered off between sessions | 4–6 days |
+| Left alone | about 1 h, then off |
+| A normal day, off between sessions | 4–6 days |
 
-A normal day here is about an hour of holding it: a 10 minute quiet breath, one 25 minute timer, and 10 minutes of tick or noise, then a long press of PWR until the next time. That is on the order of 80–120 mAh. Left running on a desk or in a pocket, the dark screen still costs most of the cell, and it is empty in about a day.
+A normal day here is about an hour of holding it: a 10 minute quiet breath, one 25 minute timer, and 10 minutes of tick or noise. That is on the order of 80–120 mAh. Left on a desk, it runs until the hour with no input, then the power chip turns it off.
 
 ## Sources
 

@@ -1,5 +1,6 @@
 #include "glass.h"
 
+#include <math.h>
 #include <string.h>
 
 static float clampf(float v, float lo, float hi)
@@ -110,11 +111,50 @@ static void settle_breath(sigrun *s)
     s->look.numeral_light = 0.f;
 }
 
+static float upright_of(float gx, float gy)
+{
+    float m = sqrtf(gx * gx + gy * gy);
+    float t = (m - 0.55f) / (0.92f - 0.55f);
+
+    if (t < 0.f) {
+        t = 0.f;
+    }
+    if (t > 1.f) {
+        t = 1.f;
+    }
+    return t * t * (3.f - 2.f * t);
+}
+
+static void ring_keep_in(sigrun *s, float lim)
+{
+    float d = sqrtf(s->sway_px * s->sway_px + s->sway_py * s->sway_py);
+    float nx;
+    float ny;
+    float vn;
+
+    if (d <= lim || d < 0.5f) {
+        return;
+    }
+    nx = s->sway_px / d;
+    ny = s->sway_py / d;
+    vn = s->sway_vx * nx + s->sway_vy * ny;
+    if (vn > 0.f) {
+        s->sway_vx -= 1.22f * vn * nx;
+        s->sway_vy -= 1.22f * vn * ny;
+    }
+    s->sway_vx *= 0.82f;
+    s->sway_vy *= 0.82f;
+    s->sway_px = nx * lim;
+    s->sway_py = ny * lim;
+}
+
 static void apply_modifiers(sigrun *s, const glass_sense *in, uint32_t dt_ms)
 {
     float glide = (float)dt_ms / (45.f + (float)dt_ms);
-    float target_x = clampf(in->rock_x, -1.f, 1.f) * 42.f;
-    float target_y = clampf(in->rock_y, -1.f, 1.f) * 42.f;
+    float upright = upright_of(in->grav_x, in->grav_y);
+    float target_x = clampf(in->rock_x, -1.f, 1.f) * 42.f * (1.f - upright);
+    float target_y = clampf(in->rock_y, -1.f, 1.f) * 42.f * (1.f - upright);
+    float step = (float)dt_ms / 1000.f;
 
     s->look.gather = clampf(in->still, 0.f, 1.f);
     s->look.warmth = clampf(in->hum, 0.f, 1.f);
@@ -126,10 +166,36 @@ static void apply_modifiers(sigrun *s, const glass_sense *in, uint32_t dt_ms)
         s->look.bead_x = in->bead_x;
         s->look.bead_y = in->bead_y;
     }
-    s->sway_px += glide * (target_x - s->sway_px);
-    s->sway_py += glide * (target_y - s->sway_py);
+    if (step < 0.001f) {
+        step = 0.001f;
+    }
+    if (step > 0.05f) {
+        step = 0.05f;
+    }
+    if (upright < 0.04f) {
+        s->sway_vx = 0.f;
+        s->sway_vy = 0.f;
+        s->sway_px += glide * (target_x - s->sway_px);
+        s->sway_py += glide * (target_y - s->sway_py);
+    } else {
+        float lim = 232.f - s->look.radius - 16.f;
+        float home = 6.f * (1.f - upright);
+
+        if (lim < 6.f) {
+            lim = 6.f;
+        }
+        if (lim > 120.f) {
+            lim = 120.f;
+        }
+        s->sway_vx += (in->grav_x * 1400.f * upright - home * s->sway_px - 3.2f * s->sway_vx) * step;
+        s->sway_vy += (in->grav_y * 1400.f * upright - home * s->sway_py - 3.2f * s->sway_vy) * step;
+        s->sway_px += s->sway_vx * step;
+        s->sway_py += s->sway_vy * step;
+        ring_keep_in(s, lim);
+    }
     s->look.sway = s->sway_px;
     s->look.sway_y = s->sway_py;
+    s->look.cell = (in->cell <= 0.f || in->charging) ? 1.f : in->cell;
     show_mode(s);
     s->look.lamp = 0.f;
     s->look.numeral = 0;
@@ -144,6 +210,12 @@ static void apply_modifiers(sigrun *s, const glass_sense *in, uint32_t dt_ms)
         }
         s->look.numeral = s->numeral;
         s->look.numeral_light = light;
+    }
+    s->look.rune = 0.f;
+    if (s->boot_ms > 0u && s->boot_ms <= 2500u) {
+        float u = (float)s->boot_ms / 2500.f;
+        u = u * u * (3.f - 2.f * u);
+        s->look.rune = u;
     }
     if (s->task_set_ms > 0u) {
         float icon = s->card == 1 ? 0.34f : (s->card == 2 ? 0.66f : 1.f);
@@ -247,6 +319,14 @@ void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms)
         numbering = 0;
     }
     s->tick = s->card == 4 ? 1 : 0;
+    if (s->boot_ms < 2500u) {
+        s->boot_ms += dt_ms;
+        if (s->boot_ms > 2500u) {
+            s->boot_ms = 2500u;
+        }
+    } else if (s->boot_ms == 2500u) {
+        s->boot_ms = 2501u;
+    }
     if (!s->tick || !was_tick) {
         s->tick_ms = 0;
     } else {

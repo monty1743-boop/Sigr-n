@@ -59,6 +59,8 @@ void glass_look_clear(glass_look *out)
     out->numeral = 0;
     out->numeral_light = 0.f;
     out->lamp = 0.f;
+    out->rune = 0.f;
+    out->cell = 1.f;
 }
 
 static void tide_shape(uint32_t ms, float *radius, float *openness)

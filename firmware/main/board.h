@@ -5,6 +5,7 @@
 typedef struct {
     int rescue;
     int charging;
+    float cell;
     int have_imu;
     int have_ear;
     glass_imu imu;
@@ -18,3 +19,4 @@ void board_read(board_sample *out);
 void board_noise(int kind);
 void board_tick(int on);
 void board_chime(void);
+void board_power_off(void);

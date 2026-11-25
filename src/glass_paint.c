@@ -9,7 +9,10 @@
 
 static int16_t s_cos[STEPS];
 static int16_t s_sin[STEPS];
+static int16_t s_disc[GLASS_H];
 static int s_ready;
+
+static int isqrt(int n);
 
 static const uint8_t BAYER[16] = {
     0, 8, 2, 10,
@@ -40,6 +43,11 @@ static void paint_init(void)
         float a = (float)i * 6.2831853f / (float)STEPS;
         s_cos[i] = (int16_t)(cosf(a) * 1024.f);
         s_sin[i] = (int16_t)(sinf(a) * 1024.f);
+    }
+    for (i = 0; i < GLASS_H; i++) {
+        int dy = i - CY;
+        int rem = 232 * 232 - dy * dy;
+        s_disc[i] = (int16_t)(rem > 0 ? isqrt(rem) : -1);
     }
     s_ready = 1;
 }
@@ -294,6 +302,18 @@ static void stroke(uint8_t *heat, int x0, int y0, int x1, int y1, int rad, int h
     }
 }
 
+static void sowilo(uint8_t *heat, int cx, int cy, float light)
+{
+    int h = (int)(30.f + light * 210.f);
+
+    if (h < 8) {
+        return;
+    }
+    stroke(heat, cx - 36, cy - 90, cx + 54, cy - 16, 18, h);
+    stroke(heat, cx + 54, cy - 16, cx - 54, cy + 16, 18, h);
+    stroke(heat, cx - 54, cy + 16, cx + 36, cy + 90, 18, h);
+}
+
 static void digit(uint8_t *heat, int cx, int cy, int d, int h)
 {
     int x0 = cx - 48;
@@ -365,7 +385,6 @@ static void quantize(uint16_t *rgb, const uint8_t *heat, float warmth)
     int bm = 198 - w * 148 / 255;
     uint16_t lut[256];
     int h;
-    int i;
 
     for (h = 0; h < 256; h++) {
         int r = h * rm / 255;
@@ -373,19 +392,29 @@ static void quantize(uint16_t *rgb, const uint8_t *heat, float warmth)
         int b = h * bm / 255;
         lut[h] = (uint16_t)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
     }
-    i = 0;
     for (int y = 0; y < GLASS_H; y++) {
-        int row = (y & 3) * 4;
-        for (int x = 0; x < GLASS_W; x++, i++) {
+        int half = s_disc[y];
+        int x0;
+        int x1;
+        int row;
+        const uint8_t *src;
+        uint16_t *dst;
+
+        if (half < 0) {
+            continue;
+        }
+        x0 = CX - half;
+        x1 = CX + half;
+        row = (y & 3) * 4;
+        src = heat + (size_t)y * GLASS_W + x0;
+        dst = rgb + (size_t)y * GLASS_W + x0;
+        for (int x = x0; x <= x1; x++, src++, dst++) {
             int sample;
-            if (heat[i] == 0) {
+            if (*src == 0) {
                 continue;
             }
-            {
-                int spread = heat[i] < 48 ? 3 : 1;
-                sample = heat[i] + ((int)BAYER[row + (x & 3)] - 8) * spread;
-            }
-            rgb[i] = lut[clampi(sample, 0, 255)];
+            sample = *src + ((int)BAYER[row + (x & 3)] - 8) * (*src < 48 ? 3 : 1);
+            *dst = lut[clampi(sample, 0, 255)];
         }
     }
 }
@@ -435,6 +464,8 @@ void glass_look_ease(glass_look *drawn, const glass_look *goal, uint32_t dt_ms)
     drawn->numeral = goal->numeral;
     drawn->numeral_light = goal->numeral_light;
     drawn->lamp = goal->lamp;
+    drawn->rune = goal->rune;
+    drawn->cell = goal->cell > 0.f ? goal->cell : 1.f;
 }
 
 void glass_paint(uint16_t *rgb565, uint8_t *heat, const glass_look *look)
@@ -460,6 +491,10 @@ void glass_paint(uint16_t *rgb565, uint8_t *heat, const glass_look *look)
         glow = 10;
     }
     body = clampi((int)(look->amp * 110.f), 0, 140);
+    if (look->cell > 0.f && look->cell < 0.4f) {
+        float q = look->cell / 0.4f;
+        body = (int)((float)body * (0.72f + 0.28f * q));
+    }
 
     moon(heat, cx, cy, look->disk);
     ring(heat, cx, cy, (int)look->radius_lag, thicken((int)look->radius_lag, glow + 2), body / 4);
@@ -503,6 +538,9 @@ void glass_paint(uint16_t *rgb565, uint8_t *heat, const glass_look *look)
     }
     if (look->numeral > 0 && look->numeral_light > 0.02f) {
         numerals(heat, cx, cy, look->numeral, look->numeral_light);
+    }
+    if (look->rune > 0.01f) {
+        sowilo(heat, cx, cy, look->rune);
     }
 
     quantize(rgb565, heat, look->warmth);

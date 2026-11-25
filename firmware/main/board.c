@@ -23,6 +23,12 @@ static const char *TAG = "sigrun";
 #define AXP_REG_ID 0x03
 #define AXP_REG_STATUS1 0x00
 #define AXP_REG_STATUS2 0x01
+#define AXP_REG_COMMON 0x10
+#define AXP_SOFT_OFF 0x01
+#define AXP_REG_PWROFF_EN 0x22
+#define AXP_REG_ADC 0x30
+#define AXP_REG_VBAT_H 0x34
+#define AXP_REG_VBAT_L 0x35
 #define AXP_REG_INTEN2 0x41
 #define AXP_REG_INTSTS2 0x49
 #define AXP_PKEY_LONG (1u << 2)
@@ -66,6 +72,8 @@ static esp_err_t reg_read(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t *dat
     return i2c_master_transmit_receive(dev, &reg, 1, data, len, 50);
 }
 
+static float cell_level(void);
+
 static esp_err_t reg_write(i2c_master_dev_handle_t dev, uint8_t reg, uint8_t val)
 {
     uint8_t buf[2] = {reg, val};
@@ -102,6 +110,21 @@ static void axp_init(void)
         reg_write(s_axp, AXP_REG_INTEN2, en);
     }
     reg_write(s_axp, AXP_REG_INTSTS2, 0xFF);
+    {
+        uint8_t off = 0;
+        if (reg_read(s_axp, AXP_REG_PWROFF_EN, &off, 1) != ESP_OK) {
+            off = 0;
+        }
+        /* Long press powers off. Bit 0 set would restart instead. */
+        off = (uint8_t)((off & ~0x01u) | 0x02u);
+        reg_write(s_axp, AXP_REG_PWROFF_EN, off);
+    }
+    {
+        uint8_t adc = 0;
+        if (reg_read(s_axp, AXP_REG_ADC, &adc, 1) == ESP_OK) {
+            reg_write(s_axp, AXP_REG_ADC, (uint8_t)(adc | 0x01u));
+        }
+    }
     s_axp_ok = 1;
     ESP_LOGI(TAG, "power chip ready");
 }
@@ -196,6 +219,49 @@ static void read_power(board_sample *out)
     }
     charge = status2 & 0x07;
     out->charging = (charge >= 1 && charge <= 4) || (status1 & 0x20) != 0;
+    out->cell = out->charging ? 1.f : cell_level();
+}
+
+static int batt_mv(void)
+{
+    uint8_t hi = 0;
+    uint8_t lo = 0;
+
+    if (!s_axp_ok) {
+        return 0;
+    }
+    if (reg_read(s_axp, AXP_REG_VBAT_H, &hi, 1) != ESP_OK) {
+        return 0;
+    }
+    if (reg_read(s_axp, AXP_REG_VBAT_L, &lo, 1) != ESP_OK) {
+        return 0;
+    }
+    return ((int)(hi & 0x1Fu) << 8) | lo;
+}
+
+static float cell_level(void)
+{
+    static int n;
+    static float level = 1.f;
+    int mv;
+
+    n++;
+    if (n < 50 && level > 0.f) {
+        return level;
+    }
+    n = 0;
+    mv = batt_mv();
+    if (mv < 2500) {
+        return level;
+    }
+    level = (mv - 3450.f) / (4100.f - 3450.f);
+    if (level < 0.f) {
+        level = 0.f;
+    }
+    if (level > 1.f) {
+        level = 1.f;
+    }
+    return level;
 }
 
 void board_latch_touch(void)
@@ -473,6 +539,7 @@ static void noise_task(void *arg)
         if (!s_tick) {
             s_tick_on = 0;
         }
+        gpio_set_level(BSP_POWER_AMP_IO, (kind > 0 || s_tick_on || s_chime_at >= 0 || s_chime) ? 1 : 0);
         speaker_vol((kind <= 0 && (s_chime_at >= 0 || s_tick_on || s_chime)) ? s_vol_hit : s_vol_noise);
         if (kind > 0) {
             s_chime_at = -1;
@@ -559,7 +626,7 @@ static void noise_init(void)
     }
     speaker_vol(s_vol_noise);
     gpio_set_direction(BSP_POWER_AMP_IO, GPIO_MODE_OUTPUT);
-    gpio_set_level(BSP_POWER_AMP_IO, 1);
+    gpio_set_level(BSP_POWER_AMP_IO, 0);
     if (xTaskCreate(noise_task, "sigrun_noise", 4096, NULL, 4, NULL) != pdPASS) {
         ESP_LOGW(TAG, "noise task did not start");
         return;
@@ -577,6 +644,23 @@ void board_chime(void)
     if (s_spk != NULL) {
         s_chime = 1;
     }
+}
+
+void board_power_off(void)
+{
+    uint8_t cfg = 0;
+
+    gpio_set_direction(BSP_POWER_AMP_IO, GPIO_MODE_OUTPUT);
+    gpio_set_level(BSP_POWER_AMP_IO, 0);
+    if (!s_axp_ok) {
+        return;
+    }
+    if (reg_read(s_axp, AXP_REG_COMMON, &cfg, 1) != ESP_OK) {
+        cfg = 0;
+    }
+    reg_write(s_axp, AXP_REG_COMMON, (uint8_t)(cfg | AXP_SOFT_OFF));
+    vTaskDelay(pdMS_TO_TICKS(100));
+    reg_write(s_axp, AXP_REG_COMMON, (uint8_t)(cfg | AXP_SOFT_OFF));
 }
 
 void board_noise(int kind)

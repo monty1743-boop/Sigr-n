@@ -6,6 +6,7 @@
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
 #include "esp_heap_caps.h"
+#include "esp_memory_utils.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -19,7 +20,7 @@ static glass_look s_pub;
 static sigrun_scene s_scene;
 static sigrun_source s_source;
 static volatile uint32_t s_frame_ms;
-static volatile int s_finger;
+static volatile int s_input;
 static glass_sense s_sense;
 
 static const char *scene_name(sigrun_scene scene)
@@ -87,11 +88,14 @@ static void sense_task(void *arg)
         }
 
         board_read(&sample);
-        s_finger = sample.touch.down;
+        if (sample.touch.down || sample.rescue) {
+            s_input = 1;
+        }
         memset(&s_sense, 0, sizeof(s_sense));
         s_sense.now_ms = now;
         s_sense.rescue = sample.rescue;
         s_sense.charging = sample.charging;
+        s_sense.cell = sample.cell;
         if (sample.have_imu) {
             glass_body_imu(&body, &sample.imu, dt, &s_sense);
         }
@@ -147,12 +151,16 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(bsp_display_brightness_set(35));
 
-    heat = heap_caps_malloc(GLASS_W * GLASS_H, MALLOC_CAP_SPIRAM);
+    heat = heap_caps_malloc(GLASS_W * GLASS_H, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (heat == NULL) {
+        heat = heap_caps_malloc(GLASS_W * GLASS_H, MALLOC_CAP_SPIRAM);
+    }
     px = heap_caps_malloc(GLASS_W * GLASS_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     if (heat == NULL || px == NULL) {
-        ESP_LOGE(TAG, "no psram for the picture");
+        ESP_LOGE(TAG, "no memory for the picture");
         return;
     }
+    ESP_LOGI(TAG, "picture heat in %s", esp_ptr_internal(heat) ? "internal ram" : "psram");
 
     ESP_ERROR_CHECK(bsp_display_lock((uint32_t)-1));
     lv_obj_t *screen = lv_screen_active();
@@ -177,9 +185,8 @@ void app_main(void)
     static uint32_t pace_ms = 16;
     static uint32_t idle_ms = 0;
     static uint32_t panel_ms = 0;
-    static float cover = 1.f;
-    static int asleep = 0;
     static int bright = 35;
+    static int powered_off = 0;
 
     while (1) {
         glass_look look;
@@ -187,9 +194,6 @@ void app_main(void)
         uint32_t frame_dt;
         uint32_t now;
         uint32_t dt;
-        int touched;
-        int normal;
-        int next;
 
         now = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         dt = panel_ms == 0 ? 0 : now - panel_ms;
@@ -197,52 +201,20 @@ void app_main(void)
             dt = 200u;
         }
         panel_ms = now;
-        touched = s_finger;
-        if (touched) {
+        if (s_input) {
+            s_input = 0;
             idle_ms = 0;
-            asleep = 0;
-            cover += (float)dt / 900.f;
-            if (cover > 1.f) {
-                cover = 1.f;
-            }
-        } else if (cover >= 1.f) {
+        } else {
             idle_ms += dt;
-            if (idle_ms >= 3600000u) {
-                idle_ms = 3600000u;
-            }
         }
-        if (!touched && idle_ms >= 3600000u && cover > 0.f) {
-            cover -= (float)dt / 900.f;
-            if (cover <= 0.f) {
-                cover = 0.f;
-                asleep = 1;
-            }
+        if (!powered_off && idle_ms >= 3600000u) {
+            powered_off = 1;
+            board_power_off();
         }
 
         portENTER_CRITICAL(&s_mux);
         look = s_pub;
         portEXIT_CRITICAL(&s_mux);
-
-        normal = 35 + (int)(look.lamp * 65.f + 0.5f);
-        if (normal > 100) {
-            normal = 100;
-        }
-        next = (int)((float)normal * cover + 0.5f);
-        if (next < 0) {
-            next = 0;
-        }
-
-        if (asleep) {
-            if (bsp_display_lock(120) == ESP_OK) {
-                if (next != bright) {
-                    bsp_display_brightness_set(next);
-                    bright = next;
-                }
-                bsp_display_unlock();
-            }
-            vTaskDelay(pdMS_TO_TICKS(40));
-            continue;
-        }
 
         started = (uint32_t)(xTaskGetTickCount() * portTICK_PERIOD_MS);
         glass_look_ease(&shown, &look, pace_ms);
@@ -255,8 +227,12 @@ void app_main(void)
         }
 
         if (bsp_display_lock(120) == ESP_OK) {
+            int next = look.rune > 0.f ? (int)(look.rune * 100.f + 0.5f) : 35 + (int)(look.lamp * 65.f + 0.5f);
             lv_draw_buf_t *buf = lv_canvas_get_draw_buf(canvas);
 
+            if (next > 100) {
+                next = 100;
+            }
             if (next != bright) {
                 bsp_display_brightness_set(next);
                 bright = next;
