@@ -6,7 +6,6 @@
 #include "bsp/display.h"
 #include "bsp/esp-bsp.h"
 #include "esp_heap_caps.h"
-#include "esp_memory_utils.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -151,16 +150,12 @@ void app_main(void)
     }
     ESP_ERROR_CHECK(bsp_display_brightness_set(35));
 
-    heat = heap_caps_malloc(GLASS_W * GLASS_H, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    if (heat == NULL) {
-        heat = heap_caps_malloc(GLASS_W * GLASS_H, MALLOC_CAP_SPIRAM);
-    }
+    heat = heap_caps_malloc(GLASS_W * GLASS_H, MALLOC_CAP_SPIRAM);
     px = heap_caps_malloc(GLASS_W * GLASS_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     if (heat == NULL || px == NULL) {
         ESP_LOGE(TAG, "no memory for the picture");
         return;
     }
-    ESP_LOGI(TAG, "picture heat in %s", esp_ptr_internal(heat) ? "internal ram" : "psram");
 
     ESP_ERROR_CHECK(bsp_display_lock((uint32_t)-1));
     lv_obj_t *screen = lv_screen_active();

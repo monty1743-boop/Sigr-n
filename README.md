@@ -15,7 +15,7 @@ Pocket breath glass on a Waveshare ESP32-S3-Touch-AMOLED-1.75C. One 466×466 pic
 | AXP2101 | PMIC, I2C 0x34. Short press is a mode step. Long press is power-off |
 | GPIO0 | BOOT. Short press is the same mode step |
 
-I2C is GPIO14 SCL and GPIO15 SDA. The sense loop is 20 ms. A painted frame is about 50–60 ms.
+I2C is GPIO14 SCL and GPIO15 SDA. The sense loop is 20 ms. A painted frame is about 70–90 ms.
 
 ## Behavior
 
