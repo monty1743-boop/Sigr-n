@@ -351,12 +351,16 @@ static void bead_step(glass_body *b, const glass_touch *touch, uint32_t dt_ms, g
 void glass_body_touch(glass_body *b, const glass_touch *touch, uint32_t dt_ms, glass_sense *out)
 {
     float moved;
+    int dial;
 
     out->tap = 0;
     out->hold = 0;
     out->tap_x = 0.f;
     out->finger_down = 0;
     out->bead_grab = 0;
+    out->finger_x = touch->x;
+    out->finger_y = touch->y;
+    out->press_ms = 0;
     bead_step(b, touch, dt_ms, out);
     if (!b->down_was && touch->down) {
         b->down_ms = 0;
@@ -388,8 +392,19 @@ void glass_body_touch(glass_body *b, const glass_touch *touch, uint32_t dt_ms, g
     } else {
         b->omega *= 0.85f;
     }
+    dial = touch->down && b->timer_face && b->down_ms >= GLASS_DIAL_MS;
+    if (dial) {
+        b->grabbed = 0;
+        b->on_bead = 0;
+        out->bead_grab = 0;
+        b->have_ang = 0;
+        b->omega = 0.f;
+        b->bvx = 0.f;
+        b->bvy = 0.f;
+    }
+    out->press_ms = touch->down ? b->down_ms : 0;
 
-    if (touch->down && dt_ms > 0u && !b->grabbed) {
+    if (touch->down && dt_ms > 0u && !b->grabbed && !dial) {
         float dx = touch->x - (float)GLASS_W * 0.5f;
         float dy = touch->y - (float)GLASS_H * 0.5f;
         float r = sqrtf(dx * dx + dy * dy);

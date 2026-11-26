@@ -10,9 +10,44 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "nvs.h"
 #include "nvs_flash.h"
 
 static const char *TAG = "sigrun";
+
+static void load_minutes(sigrun *glass)
+{
+    nvs_handle_t handle;
+    uint8_t mins[3] = {5, 10, 25};
+    size_t len = sizeof(mins);
+
+    if (nvs_open("sigrun", NVS_READONLY, &handle) == ESP_OK) {
+        if (nvs_get_blob(handle, "mins", mins, &len) != ESP_OK || len != sizeof(mins)) {
+            mins[0] = 5;
+            mins[1] = 10;
+            mins[2] = 25;
+        }
+        nvs_close(handle);
+    }
+    sigrun_set_minutes(glass, mins[0], mins[1], mins[2]);
+}
+
+static void store_minutes(const sigrun *glass)
+{
+    nvs_handle_t handle;
+    uint8_t mins[3];
+
+    mins[0] = (uint8_t)glass->task_min[0];
+    mins[1] = (uint8_t)glass->task_min[1];
+    mins[2] = (uint8_t)glass->task_min[2];
+    if (nvs_open("sigrun", NVS_READWRITE, &handle) != ESP_OK) {
+        return;
+    }
+    if (nvs_set_blob(handle, "mins", mins, sizeof(mins)) == ESP_OK) {
+        nvs_commit(handle);
+    }
+    nvs_close(handle);
+}
 
 static portMUX_TYPE s_mux = portMUX_INITIALIZER_UNLOCKED;
 static glass_look s_pub;
@@ -62,6 +97,7 @@ static void sense_task(void *arg)
 
     (void)arg;
     sigrun_init(&glass);
+    load_minutes(&glass);
     glass_body_init(&body);
     portENTER_CRITICAL(&s_mux);
     s_pub = glass.look;
@@ -98,6 +134,7 @@ static void sense_task(void *arg)
         if (sample.have_imu) {
             glass_body_imu(&body, &sample.imu, dt, &s_sense);
         }
+        body.timer_face = glass.card >= 1 && glass.card <= 3 && glass.task_end_ms == 0;
         glass_body_touch(&body, &sample.touch, dt, &s_sense);
         if (sample.have_ear) {
             glass_body_ear(&body, &sample.ear, dt, &s_sense);
@@ -107,6 +144,10 @@ static void sense_task(void *arg)
             sigrun_step(&glass, &s_sense, dt);
             if (!ending && glass.task_end_ms > 0) {
                 board_chime();
+            }
+            if (glass.minutes_dirty) {
+                store_minutes(&glass);
+                glass.minutes_dirty = 0;
             }
         }
 
@@ -149,12 +190,54 @@ void app_main(void)
         return;
     }
     ESP_ERROR_CHECK(bsp_display_brightness_set(35));
+    ESP_LOGI(TAG, "build dial=156 digits");
 
     heat = heap_caps_malloc(GLASS_W * GLASS_H, MALLOC_CAP_SPIRAM);
     px = heap_caps_malloc(GLASS_W * GLASS_H * sizeof(uint16_t), MALLOC_CAP_SPIRAM);
     if (heat == NULL || px == NULL) {
         ESP_LOGE(TAG, "no memory for the picture");
         return;
+    }
+    {
+        glass_look probe;
+        int y;
+        int y0 = -1;
+        int y1 = -1;
+        int gaps = 0;
+
+        glass_look_clear(&probe);
+        probe.numeral = 53;
+        probe.numeral_light = 1.f;
+        probe.amp = 1.f;
+        probe.disk = 1.f;
+        probe.radius = 140.f;
+        probe.radius_lag = 140.f;
+        glass_paint(px, heat, &probe);
+        for (y = 0; y < GLASS_H; y++) {
+            int x;
+            for (x = 270; x < 340; x++) {
+                if (heat[y * GLASS_W + x] > 150) {
+                    if (y0 < 0) {
+                        y0 = y;
+                    }
+                    y1 = y;
+                    break;
+                }
+            }
+        }
+        for (y = y0; y <= y1; y++) {
+            int x;
+            int lit = 0;
+            for (x = 270; x < 340; x++) {
+                if (heat[y * GLASS_W + x] > 150) {
+                    lit = 1;
+                }
+            }
+            if (!lit) {
+                gaps++;
+            }
+        }
+        ESP_LOGI(TAG, "mark53 gaps=%d span=%d", gaps, y1 - y0);
     }
 
     ESP_ERROR_CHECK(bsp_display_lock((uint32_t)-1));

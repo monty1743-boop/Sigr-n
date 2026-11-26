@@ -20,7 +20,40 @@ void sigrun_init(sigrun *s)
     s->scene = SIGRUN_TIDE;
     s->breath_period = 10.f;
     s->source = SIGRUN_SRC_CLOCK;
+    s->task_min[0] = 5;
+    s->task_min[1] = 10;
+    s->task_min[2] = 25;
     glass_look_tide(0, &s->look);
+}
+
+void sigrun_set_minutes(sigrun *s, int a, int b, int c)
+{
+    int next[3];
+    int i;
+
+    next[0] = a;
+    next[1] = b;
+    next[2] = c;
+    for (i = 0; i < 3; i++) {
+        if (next[i] >= 5 && next[i] <= 59) {
+            s->task_min[i] = next[i];
+        }
+    }
+}
+
+static float tenth_disk(uint32_t ms)
+{
+    const uint32_t ten = 600000u;
+    uint32_t part;
+
+    if (ms == 0u) {
+        return 0.f;
+    }
+    part = ms % ten;
+    if (part == 0u) {
+        return 1.f;
+    }
+    return (float)part / (float)ten;
 }
 
 static int wrap_i(int v, int n)
@@ -38,13 +71,7 @@ static void show_mode(sigrun *s)
 {
     s->look.arc = 0.f;
     s->look.disk = 0.f;
-    if (s->card == 1) {
-        s->look.disk = 0.34f;
-    } else if (s->card == 2) {
-        s->look.disk = 0.66f;
-    } else if (s->card == 3) {
-        s->look.disk = 1.f;
-    } else if (s->card == 4) {
+    if (s->card == 4) {
         s->look.gather = 0.f;
         s->look.warmth = 0.f;
         s->look.mote = s->tick_ms < 120u ? 1.f : 0.12f;
@@ -68,25 +95,30 @@ static void show_mode(sigrun *s)
 static void choose_mode(sigrun *s)
 {
     static const int kinds[] = {0, 0, 0, 0, 0, 1, 2, 3};
-    static const uint32_t tasks[] = {0u, 300000u, 600000u, 1500000u, 0u, 0u, 0u, 0u};
+    int mins;
 
     s->card = wrap_i(s->card + 1, 8);
     s->noise = kinds[s->card];
-    s->task_set_ms = tasks[s->card];
+    s->task_set_ms = 0;
     s->task_running = 0;
     s->task_left_ms = 0;
-    s->task_armed = s->task_set_ms > 0u ? 1 : 0;
+    s->task_armed = 0;
     s->task_end_ms = 0;
     s->numeral = 0;
     s->numeral_ms = 0;
-    if (s->card == 1) {
-        s->numeral = 5;
-        s->numeral_ms = 1;
-    } else if (s->card == 2) {
-        s->numeral = 10;
-        s->numeral_ms = 1;
-    } else if (s->card == 3) {
-        s->numeral = 25;
+    s->dialing = 0;
+    s->bare_ms = 0;
+    if (s->card >= 1 && s->card <= 3) {
+        mins = s->task_min[s->card - 1];
+        if (mins < 5) {
+            mins = 5;
+        }
+        if (mins > 59) {
+            mins = 59;
+        }
+        s->task_set_ms = (uint32_t)mins * 60000u;
+        s->task_armed = 1;
+        s->numeral = mins;
         s->numeral_ms = 1;
     }
 }
@@ -102,6 +134,7 @@ static void settle_breath(sigrun *s)
     s->task_end_ms = 0;
     s->numeral = 0;
     s->numeral_ms = 0;
+    s->bare_ms = 0;
     s->tick = 0;
     s->tick_ms = 0;
     s->look.disk = 0.f;
@@ -109,6 +142,125 @@ static void settle_breath(sigrun *s)
     s->look.lamp = 0.f;
     s->look.numeral = 0;
     s->look.numeral_light = 0.f;
+}
+
+static const float DIAL_IN = GLASS_DIAL_IN;
+static const float DIAL_OUT = GLASS_DIAL_OUT;
+
+static int minute_from_radius(float r)
+{
+    float t = (r - DIAL_IN) / (DIAL_OUT - DIAL_IN);
+    int m;
+
+    if (t < 0.f) {
+        t = 0.f;
+    }
+    if (t > 1.f) {
+        t = 1.f;
+    }
+    m = 5 + (int)(t * 54.f + 0.5f);
+    if (m < 5) {
+        m = 5;
+    }
+    if (m > 59) {
+        m = 59;
+    }
+    return m;
+}
+
+static int minute_held(int prev, float r)
+{
+    float step = (DIAL_OUT - DIAL_IN) / 54.f;
+    float center = DIAL_IN + (float)(prev - 5) * step;
+    int raw = minute_from_radius(r);
+
+    if (raw >= 59) {
+        return 59;
+    }
+    if (raw <= 5) {
+        return 5;
+    }
+    if (prev < 5 || prev > 59) {
+        return raw;
+    }
+    if (r > center + step || r < center - step) {
+        return raw;
+    }
+    return prev;
+}
+
+static void commit_dial(sigrun *s, int minutes, int charging)
+{
+    if (minutes < 5) {
+        minutes = 5;
+    }
+    if (minutes > 59) {
+        minutes = 59;
+    }
+    s->task_min[s->card - 1] = minutes;
+    s->task_set_ms = (uint32_t)minutes * 60000u;
+    s->task_end_ms = 0;
+    s->minutes_dirty = 1;
+    s->numeral = minutes;
+    s->numeral_ms = 1;
+    s->bare_ms = 1000u;
+    if (charging) {
+        s->task_armed = 1;
+        s->task_running = 0;
+        s->task_left_ms = 0;
+    } else {
+        s->task_running = 1;
+        s->task_armed = 0;
+        s->task_left_ms = s->task_set_ms;
+    }
+}
+
+static void follow_dial(sigrun *s, const glass_sense *in)
+{
+    float dx = in->finger_x - 233.f;
+    float dy = in->finger_y - 233.f;
+    float r = sqrtf(dx * dx + dy * dy);
+    int minute;
+
+    if (r < DIAL_IN) {
+        r = DIAL_IN;
+    }
+    if (r > DIAL_OUT) {
+        r = DIAL_OUT;
+    }
+    minute = s->dialing ? minute_held(s->dial_min, r) : minute_from_radius(r);
+    s->dial_min = minute;
+    s->dialing = 1;
+    s->look.radius = r;
+    s->look.radius_lag = r;
+    s->look.radius_second = r;
+    s->look.second = 0.f;
+    s->look.numeral = minute;
+    s->look.numeral_light = 1.f;
+    s->look.disk = tenth_disk((uint32_t)minute * 60000u);
+    s->sway_px = 0.f;
+    s->sway_py = 0.f;
+    s->sway_vx = 0.f;
+    s->sway_vy = 0.f;
+    s->look.sway = 0.f;
+    s->look.sway_y = 0.f;
+    s->look.bare = 1;
+    s->look.guiding = 1;
+    s->look.guide_x = in->finger_x;
+    s->look.guide_y = in->finger_y;
+    {
+        float dx = in->finger_x - 233.f;
+        float dy = in->finger_y - 233.f;
+        float rf = sqrtf(dx * dx + dy * dy);
+        float rn = 108.f;
+        if (rf < 8.f) {
+            s->look.mark_x = 233.f;
+            s->look.mark_y = 233.f - rn;
+        } else {
+            s->look.mark_x = 233.f - dx / rf * rn;
+            s->look.mark_y = 233.f - dy / rf * rn;
+        }
+    }
 }
 
 static float upright_of(float gx, float gy)
@@ -218,7 +370,6 @@ static void apply_modifiers(sigrun *s, const glass_sense *in, uint32_t dt_ms)
         s->look.rune = u;
     }
     if (s->task_set_ms > 0u) {
-        float icon = s->card == 1 ? 0.34f : (s->card == 2 ? 0.66f : 1.f);
         if (s->task_end_ms > 0) {
             float t = (float)s->task_end_ms;
             float u;
@@ -238,11 +389,20 @@ static void apply_modifiers(sigrun *s, const glass_sense *in, uint32_t dt_ms)
                 u = 1.f - fade;
                 lamp = 1.f - fade;
             }
-            s->look.disk = icon * u;
+            s->look.disk = u;
             s->look.lamp = lamp;
         } else if (s->task_running) {
-            s->look.disk = clampf((float)s->task_left_ms / (float)s->task_set_ms, 0.f, 1.f) * icon;
-        } else if (!s->task_armed) {
+            float u = (float)s->task_left_ms / (float)s->task_set_ms;
+            if (u < 0.f) {
+                u = 0.f;
+            }
+            if (u > 1.f) {
+                u = 1.f;
+            }
+            s->look.disk = tenth_disk(s->task_set_ms) * u;
+        } else if (s->task_armed) {
+            s->look.disk = tenth_disk(s->task_set_ms);
+        } else {
             s->look.disk = 0.f;
         }
     }
@@ -311,6 +471,7 @@ void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms)
     int ending = s->task_end_ms > 0;
     int numbering = s->numeral_ms > 0;
     int was_tick = s->tick;
+    int dial;
 
     s->catalog = in->charging ? 1 : 0;
     if (in->rescue) {
@@ -318,6 +479,7 @@ void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms)
         ending = 0;
         numbering = 0;
     }
+    dial = s->card >= 1 && s->card <= 3 && s->task_end_ms == 0 && in->finger_down && in->press_ms >= GLASS_DIAL_MS;
     s->tick = s->card == 4 ? 1 : 0;
     if (s->boot_ms < 2500u) {
         s->boot_ms += dt_ms;
@@ -335,11 +497,11 @@ void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms)
             s->tick_ms -= 1000u;
         }
     }
-    if (!in->charging && s->task_armed && !s->task_running && s->task_end_ms == 0 && s->scene == SIGRUN_TIDE) {
+    if (!dial && !in->charging && s->task_armed && !s->task_running && s->task_end_ms == 0 && s->scene == SIGRUN_TIDE) {
         s->task_running = 1;
         s->task_left_ms = s->task_set_ms;
         s->task_armed = 0;
-    } else if (s->task_running && s->scene == SIGRUN_TIDE && !in->charging) {
+    } else if (!dial && s->task_running && s->scene == SIGRUN_TIDE && !in->charging) {
         if (dt_ms >= s->task_left_ms) {
             s->task_left_ms = 0;
             s->task_running = 0;
@@ -360,6 +522,12 @@ void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms)
         if (s->task_end_ms >= 3200u) {
             settle_breath(s);
         }
+    }
+    if (s->dialing && !dial) {
+        if (s->card >= 1 && s->card <= 3 && s->task_end_ms == 0) {
+            commit_dial(s, s->dial_min, in->charging);
+        }
+        s->dialing = 0;
     }
 
     s->scene_elapsed += dt_ms;
@@ -385,4 +553,22 @@ void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms)
     }
 
     apply_modifiers(s, in, dt_ms);
+    s->look.guiding = 0;
+    if (dial) {
+        follow_dial(s, in);
+    } else if (s->bare_ms > 0u) {
+        s->look.bare = 1;
+        s->look.numeral = s->numeral;
+        s->look.numeral_light = 1.f;
+        if (dt_ms >= s->bare_ms) {
+            s->bare_ms = 0;
+            s->numeral = 0;
+            s->numeral_ms = 0;
+            s->look.bare = 0;
+            s->look.numeral = 0;
+            s->look.numeral_light = 0.f;
+        } else {
+            s->bare_ms -= dt_ms;
+        }
+    }
 }

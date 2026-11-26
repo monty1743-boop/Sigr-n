@@ -15,6 +15,9 @@
 #define GLASS_SIGH_CYCLES 3
 #define GLASS_SIGH_TOTAL_MS (GLASS_SIGH_CYCLE_MS * GLASS_SIGH_CYCLES)
 #define GLASS_MIN_PERIOD_S 7.5f
+#define GLASS_DIAL_MS 480u
+#define GLASS_DIAL_IN 36.f
+#define GLASS_DIAL_OUT 172.f
 #define GLASS_GROUND_MS 20000u
 #define GLASS_RESCUE_WINDOW_MS 60000u
 
@@ -44,6 +47,12 @@ typedef struct {
     float lamp;
     float rune;
     float cell;
+    int bare;
+    int guiding;
+    float mark_x;
+    float mark_y;
+    float guide_x;
+    float guide_y;
 } glass_look;
 
 void glass_look_clear(glass_look *out);
@@ -78,6 +87,9 @@ typedef struct {
     float grav_y;
     float finger_period;
     int finger_down;
+    float finger_x;
+    float finger_y;
+    uint32_t press_ms;
     int room_quiet;
     float near_breath;
     float hum;
@@ -112,6 +124,11 @@ typedef struct {
     int card;
     int list_set;
     uint32_t task_set_ms;
+    int task_min[3];
+    int dialing;
+    int dial_min;
+    int minutes_dirty;
+    uint32_t bare_ms;
     int word;
     int noise;
     int task_armed;
@@ -128,6 +145,7 @@ typedef struct {
 } sigrun;
 
 void sigrun_init(sigrun *s);
+void sigrun_set_minutes(sigrun *s, int a, int b, int c);
 void sigrun_step(sigrun *s, const glass_sense *in, uint32_t dt_ms);
 
 void glass_look_ease(glass_look *drawn, const glass_look *goal, uint32_t dt_ms);
@@ -188,6 +206,7 @@ typedef struct {
     float noise;
     int noise_primed;
     float env;
+    int timer_face;
 } glass_body;
 
 void glass_body_init(glass_body *b);

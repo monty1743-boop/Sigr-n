@@ -291,7 +291,7 @@ static void stroke(uint8_t *heat, int x0, int y0, int x1, int y1, int rad, int h
     int dx = x1 - x0;
     int dy = y1 - y0;
     int span = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
-    int n = span / 8;
+    int n = span / 2;
     int i;
 
     if (n < 1) {
@@ -314,54 +314,106 @@ static void sowilo(uint8_t *heat, int cx, int cy, float light)
     stroke(heat, cx - 54, cy + 16, cx + 36, cy + 90, 18, h);
 }
 
-static void digit(uint8_t *heat, int cx, int cy, int d, int h)
-{
-    int x0 = cx - 48;
-    int x1 = cx + 48;
-    int y0 = cy - 88;
-    int y1 = cy;
-    int y2 = cy + 88;
+/* top, upper-right, lower-right, bottom, lower-left, upper-left, middle */
+static const uint8_t SEG[10] = {
+    0x3F, 0x00, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
+};
 
-    if (d == 1) {
-        stroke(heat, cx, y0, cx, y2, 16, h);
+static void digit(uint8_t *heat, int cx, int cy, int d, int h, float scale)
+{
+    int w = (int)(48.f * scale + 0.5f);
+    int tall = (int)(88.f * scale + 0.5f);
+    int rad = (int)(16.f * scale + 0.5f);
+    int x0 = cx - w;
+    int x1 = cx + w;
+    int y0 = cy - tall;
+    int y1 = cy;
+    int y2 = cy + tall;
+    uint8_t seg;
+
+    if (d < 0 || d > 9) {
         return;
     }
-    if (d != 4) {
-        stroke(heat, x0, y0, x1, y0, 16, h);
+    if (rad < 6) {
+        rad = 6;
     }
-    if (d == 0 || d == 2 || d == 3) {
-        stroke(heat, x1, y0, x1, y1, 16, h);
+    if (d == 1) {
+        stroke(heat, cx, y0, cx, y2, rad, h);
+        return;
     }
-    if (d == 0 || d == 5 || d == 6) {
-        stroke(heat, x0, y0, x0, y1, 16, h);
+    seg = SEG[d];
+    if (seg & 0x01) {
+        stroke(heat, x0, y0, x1, y0, rad, h);
     }
-    if (d != 0 && d != 1 && d != 7) {
-        stroke(heat, x0, y1, x1, y1, 16, h);
+    if (seg & 0x02) {
+        stroke(heat, x1, y0, x1, y1, rad, h);
     }
-    if (d == 0 || d == 3 || d == 5 || d == 6) {
-        stroke(heat, x1, y1, x1, y2, 16, h);
+    if (seg & 0x04) {
+        stroke(heat, x1, y1, x1, y2, rad, h);
     }
-    if (d == 0 || d == 2 || d == 6) {
-        stroke(heat, x0, y1, x0, y2, 16, h);
+    if (seg & 0x08) {
+        stroke(heat, x0, y2, x1, y2, rad, h);
     }
-    if (d != 4 && d != 7) {
-        stroke(heat, x0, y2, x1, y2, 16, h);
+    if (seg & 0x10) {
+        stroke(heat, x0, y1, x0, y2, rad, h);
+    }
+    if (seg & 0x20) {
+        stroke(heat, x0, y0, x0, y1, rad, h);
+    }
+    if (seg & 0x40) {
+        stroke(heat, x0, y1, x1, y1, rad, h);
     }
 }
 
 static void numerals(uint8_t *heat, int cx, int cy, int n, float light)
 {
     int h = (int)(light * 220.f);
+    float hw = (n >= 10 ? 78.f : 0.f) + 48.f + 16.f;
+    float hh = 88.f + 16.f;
+    float reach = sqrtf(hw * hw + hh * hh);
+    float scale = reach > 96.f ? 96.f / reach : 1.f;
+    int gap = (int)(78.f * scale + 0.5f);
 
     if (h < 8 || n <= 0) {
         return;
     }
     if (n >= 10) {
-        digit(heat, cx - 78, cy, n / 10, h);
-        digit(heat, cx + 78, cy, n % 10, h);
+        digit(heat, cx - gap, cy, n / 10, h, scale);
+        digit(heat, cx + gap, cy, n % 10, h, scale);
     } else {
-        digit(heat, cx, cy, n, h);
+        digit(heat, cx, cy, n, h, scale);
     }
+}
+
+static void range_marks(uint8_t *heat, float fx, float fy)
+{
+    int i;
+    int x;
+    int y;
+    float dx = fx - 233.f;
+    float dy = fy - 233.f;
+    float rf = sqrtf(dx * dx + dy * dy);
+    float ux;
+    float uy;
+
+    for (i = 0; i < STEPS; i += 4) {
+        polar(CX, CY, i, (int)GLASS_DIAL_IN, &x, &y);
+        stamp(heat, x, y, 2, 40);
+        polar(CX, CY, i, (int)GLASS_DIAL_OUT, &x, &y);
+        stamp(heat, x, y, 2, 40);
+    }
+    if (rf < 1.f) {
+        return;
+    }
+    if (rf < GLASS_DIAL_IN) {
+        rf = GLASS_DIAL_IN;
+    }
+    if (rf > GLASS_DIAL_OUT) {
+        rf = GLASS_DIAL_OUT;
+    }
+    ux = dx / sqrtf(dx * dx + dy * dy);
+    uy = dy / sqrtf(dx * dx + dy * dy);
+    stamp(heat, (int)(233.f + ux * rf), (int)(233.f + uy * rf), 5, 72);
 }
 
 static void marks(uint8_t *heat, int cx, int cy, float lit)
@@ -463,9 +515,20 @@ void glass_look_ease(glass_look *drawn, const glass_look *goal, uint32_t dt_ms)
     drawn->marks_lit = goal->marks_lit;
     drawn->numeral = goal->numeral;
     drawn->numeral_light = goal->numeral_light;
+    drawn->guiding = goal->guiding;
+    drawn->guide_x = goal->guide_x;
+    drawn->guide_y = goal->guide_y;
+    if (drawn->mark_x < 1.f && drawn->mark_y < 1.f) {
+        drawn->mark_x = goal->mark_x;
+        drawn->mark_y = goal->mark_y;
+    } else {
+        drawn->mark_x = ease_toward(drawn->mark_x, goal->mark_x, dt, 0.12f);
+        drawn->mark_y = ease_toward(drawn->mark_y, goal->mark_y, dt, 0.12f);
+    }
     drawn->lamp = goal->lamp;
     drawn->rune = goal->rune;
     drawn->cell = goal->cell > 0.f ? goal->cell : 1.f;
+    drawn->bare = goal->bare;
 }
 
 void glass_paint(uint16_t *rgb565, uint8_t *heat, const glass_look *look)
@@ -496,48 +559,59 @@ void glass_paint(uint16_t *rgb565, uint8_t *heat, const glass_look *look)
         body = (int)((float)body * (0.72f + 0.28f * q));
     }
 
-    moon(heat, cx, cy, look->disk);
-    ring(heat, cx, cy, (int)look->radius_lag, thicken((int)look->radius_lag, glow + 2), body / 4);
-    ring(heat, cx, cy, radius, thicken(radius, glow), body);
-    if (look->second > 0.05f) {
-        ring(heat, cx, cy, (int)look->radius_second, thicken((int)look->radius_second, glow), (int)(look->second * (float)body));
-    }
-
-    motes = look->gather > 0.75f ? 4 : 8;
-    mote_h = (int)(look->mote * (1.f - look->gather * 0.7f) * 150.f);
-    for (i = 0; i < motes; i++) {
-        int x;
-        int y;
-        polar(cx, cy, ang_index(look->light_angle) + i * (STEPS / motes), radius, &x, &y);
-        stamp(heat, x, y, 3, mote_h);
-    }
-    if (look->bead > 0.04f) {
-        int x;
-        int y;
-        if (look->bead_free) {
-            x = (int)look->bead_x;
-            y = (int)look->bead_y;
-        } else {
-            polar(cx, cy, ang_index(look->bead_angle), (int)(look->radius * 1.02f), &x, &y);
+    if (!look->bare) {
+        moon(heat, cx, cy, look->disk);
+        ring(heat, cx, cy, (int)look->radius_lag, thicken((int)look->radius_lag, glow + 2), body / 4);
+        ring(heat, cx, cy, radius, thicken(radius, glow), body);
+        if (look->second > 0.05f) {
+            ring(heat, cx, cy, (int)look->radius_second, thicken((int)look->radius_second, glow), (int)(look->second * (float)body));
         }
-        stamp(heat, x, y, look->bead_free ? 30 : 6, (int)(look->bead * 230.f));
-    }
-    if (look->marks > 0.5f) {
-        marks(heat, cx, cy, look->marks_lit);
-    }
-    if (look->arc > 0.05f) {
-        int n = clampi((int)(look->arc * 28.f), 1, 40);
-        int mid = ang_index(look->light_angle);
-        int k;
-        for (k = -n; k <= n; k++) {
+
+        motes = look->gather > 0.75f ? 4 : 8;
+        mote_h = (int)(look->mote * (1.f - look->gather * 0.7f) * 150.f);
+        for (i = 0; i < motes; i++) {
             int x;
             int y;
-            polar(cx, cy, mid + k, 226, &x, &y);
-            stamp(heat, x, y, 3, (int)(look->arc * 170.f));
+            polar(cx, cy, ang_index(look->light_angle) + i * (STEPS / motes), radius, &x, &y);
+            stamp(heat, x, y, 3, mote_h);
+        }
+        if (look->bead > 0.04f) {
+            int x;
+            int y;
+            if (look->bead_free) {
+                x = (int)look->bead_x;
+                y = (int)look->bead_y;
+            } else {
+                polar(cx, cy, ang_index(look->bead_angle), (int)(look->radius * 1.02f), &x, &y);
+            }
+            stamp(heat, x, y, look->bead_free ? 30 : 6, (int)(look->bead * 230.f));
+        }
+        if (look->marks > 0.5f) {
+            marks(heat, cx, cy, look->marks_lit);
+        }
+        if (look->arc > 0.05f) {
+            int n = clampi((int)(look->arc * 28.f), 1, 40);
+            int mid = ang_index(look->light_angle);
+            int k;
+            for (k = -n; k <= n; k++) {
+                int x;
+                int y;
+                polar(cx, cy, mid + k, 226, &x, &y);
+                stamp(heat, x, y, 3, (int)(look->arc * 170.f));
+            }
         }
     }
+    if (look->guiding) {
+        range_marks(heat, look->guide_x, look->guide_y);
+    }
     if (look->numeral > 0 && look->numeral_light > 0.02f) {
-        numerals(heat, cx, cy, look->numeral, look->numeral_light);
+        int nx = CX;
+        int ny = CY;
+        if (look->bare && look->mark_x > 1.f) {
+            nx = (int)look->mark_x;
+            ny = (int)look->mark_y;
+        }
+        numerals(heat, nx, ny, look->numeral, look->numeral_light);
     }
     if (look->rune > 0.01f) {
         sowilo(heat, cx, cy, look->rune);

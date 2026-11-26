@@ -478,28 +478,28 @@ static void run_hand_tests(void)
     sigrun_step(&s, &in, 20);
     in.rescue = 1;
     sigrun_step(&s, &in, 20);
-    expect(s.task_set_ms == 300000u && s.look.disk > 0.3f && s.look.disk < 0.5f, "a press selects the short moon");
+    expect(s.task_set_ms == 300000u && s.look.disk > 0.45f && s.look.disk < 0.55f, "five minutes is half a ten");
     in.rescue = 0;
     in.now_ms += 20;
     sigrun_step(&s, &in, 20);
     in.rescue = 1;
     in.now_ms += 20;
     sigrun_step(&s, &in, 20);
-    expect(s.task_set_ms == 600000u && s.look.disk > 0.55f && s.look.disk < 0.8f, "the next press selects the ten minute moon");
+    expect(s.task_set_ms == 600000u && s.look.disk > 0.95f, "ten minutes fills the moon");
     in.rescue = 0;
     in.now_ms += 20;
     sigrun_step(&s, &in, 20);
     in.rescue = 1;
     in.now_ms += 20;
     sigrun_step(&s, &in, 20);
-    expect(s.task_set_ms == 1500000u && s.look.disk > 0.9f, "the next press fills the moon");
+    expect(s.task_set_ms == 1500000u && s.look.disk > 0.45f && s.look.disk < 0.55f, "twenty-five minutes is half a ten");
     expect(s.scene == SIGRUN_TIDE, "a press on the charger does not sigh");
     in.charging = 0;
     in.rescue = 0;
     in.now_ms += 20;
     sigrun_step(&s, &in, 20);
     expect(s.catalog == 0 && s.task_running == 1 && s.task_left_ms == 1500000u, "unplug starts the moon");
-    expect(s.look.disk > 0.9f, "the running moon starts full");
+    expect(s.look.disk > 0.45f && s.look.disk < 0.55f, "the running moon keeps the half ten");
     in.rescue = 1;
     in.now_ms += 20;
     sigrun_step(&s, &in, 20);
@@ -528,6 +528,40 @@ static void run_hand_tests(void)
     in.now_ms += 20;
     sigrun_step(&s, &in, 20);
     expect(s.noise == 3 && s.look.gather > 0.6f, "the next press selects brown");
+
+    sigrun_init(&s);
+    in = sense_clear();
+    sigrun_set_minutes(&s, 15, 20, 25);
+    in.rescue = 1;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 0;
+    expect(s.task_set_ms == 900000u && s.look.disk > 0.45f && s.look.disk < 0.55f, "fifteen starts at half");
+    sigrun_step(&s, &in, 300000);
+    expect(s.task_left_ms == 600000u && s.look.disk > 0.30f && s.look.disk < 0.40f, "fifteen drains through ten without filling");
+    in.rescue = 1;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 0;
+    expect(s.task_set_ms == 1200000u && s.look.disk > 0.95f, "twenty starts full");
+    sigrun_step(&s, &in, 600000);
+    expect(s.task_left_ms == 600000u && s.look.disk > 0.45f && s.look.disk < 0.55f, "twenty drains through ten without filling");
+    in.finger_down = 1;
+    in.press_ms = GLASS_DIAL_MS;
+    in.finger_x = 233.f;
+    in.finger_y = 80.f;
+    sigrun_step(&s, &in, 20);
+    expect(s.card == 2 && s.look.bare == 1 && s.look.numeral > 5, "the middle moon sets with only the number");
+    in.finger_down = 0;
+    in.press_ms = 0;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 1;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 0;
+    in.finger_down = 1;
+    in.press_ms = GLASS_DIAL_MS;
+    sigrun_step(&s, &in, 20);
+    expect(s.card == 3 && s.look.bare == 1 && s.look.numeral > 5, "the full moon sets with only the number");
+    in.finger_down = 0;
+    in.press_ms = 0;
 
     sigrun_init(&s);
     in = sense_clear();
@@ -567,6 +601,106 @@ static void run_hand_tests(void)
     in.rescue = 0;
     sigrun_step(&s, &in, 1000);
     expect(s.look.numeral == 25, "twenty-five is shown");
+
+    sigrun_init(&s);
+    in = sense_clear();
+    in.rescue = 1;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 0;
+    in.finger_down = 1;
+    in.press_ms = GLASS_DIAL_MS;
+    in.finger_x = 233.f;
+    in.finger_y = 233.f;
+    sigrun_step(&s, &in, 20);
+    expect(s.look.numeral == 5 && s.look.radius > 30.f && s.look.radius < 42.f, "a dial at the center is five minutes");
+    expect(s.look.bare == 1, "setting a moon draws only the number");
+    expect(s.task_min[0] == 5 && s.task_set_ms == 300000u, "the length waits for release");
+    in.finger_y = 0.f;
+    in.grav_x = 1.f;
+    sigrun_step(&s, &in, 1000);
+    expect(s.look.numeral == 59 && s.look.radius > 165.f && s.look.radius < 178.f, "past the rim is fifty-nine");
+    in.finger_y = 233.f - 182.f;
+    sigrun_step(&s, &in, 20);
+    expect(s.look.numeral == 59, "the old fifty-three reach is now fifty-nine");
+    expect(s.look.sway == 0.f && s.look.sway_y == 0.f, "the ring stays centered while setting");
+    expect(s.look.guiding == 1 && s.look.mark_y > 320.f, "the number sits opposite the finger");
+    expect(s.task_left_ms == 300000u, "the countdown waits while the finger is down");
+    in.finger_down = 0;
+    in.press_ms = 0;
+    sigrun_step(&s, &in, 20);
+    expect(s.task_min[0] == 59 && s.task_set_ms == 59u * 60000u, "release stores fifty-nine");
+    expect(s.task_running == 1 && s.task_left_ms == 59u * 60000u && s.minutes_dirty, "release starts the new length");
+    expect(s.look.bare == 1 && s.look.guiding == 0 && s.look.numeral == 59, "the number stays alone just after release");
+    sigrun_step(&s, &in, 400);
+    expect(s.look.bare == 1, "the number stays alone for a second");
+    sigrun_step(&s, &in, 700);
+    expect(s.look.bare == 0 && s.look.disk > 0.05f, "the moon returns after a second");
+    sigrun_step(&s, &in, 200);
+    expect(s.look.sway > 2.f, "the ring moves again after the finger lifts");
+    expect(s.task_min[1] == 10 && s.task_min[2] == 25, "the other moons stay put");
+
+    in.rescue = 1;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 0;
+    sigrun_step(&s, &in, 1000);
+    expect(s.look.numeral == 10 && s.task_set_ms == 600000u, "the middle moon is still ten");
+    in.rescue = 1;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 0;
+    sigrun_step(&s, &in, 1000);
+    expect(s.look.numeral == 25 && s.task_set_ms == 1500000u, "the full moon is still twenty-five");
+    for (i = 0; i < 6; i++) {
+        in.rescue = 1;
+        sigrun_step(&s, &in, 20);
+        in.rescue = 0;
+        sigrun_step(&s, &in, 20);
+    }
+    sigrun_step(&s, &in, 1000);
+    expect(s.card == 1 && s.look.numeral == 59 && s.task_set_ms == 59u * 60000u, "the short moon remembers fifty-nine");
+
+    sigrun_init(&s);
+    in = sense_clear();
+    in.finger_down = 1;
+    in.press_ms = GLASS_DIAL_MS;
+    in.finger_x = 233.f;
+    in.finger_y = 0.f;
+    sigrun_step(&s, &in, 20);
+    in.finger_down = 0;
+    in.press_ms = 0;
+    sigrun_step(&s, &in, 20);
+    expect(s.card == 0 && s.task_set_ms == 0u && s.task_min[0] == 5 && s.look.numeral == 0, "quiet ignores the drag");
+
+    sigrun_init(&s);
+    in = sense_clear();
+    in.charging = 1;
+    in.rescue = 1;
+    sigrun_step(&s, &in, 20);
+    in.rescue = 0;
+    in.finger_down = 1;
+    in.press_ms = GLASS_DIAL_MS;
+    in.finger_x = 233.f;
+    in.finger_y = 27.f;
+    sigrun_step(&s, &in, 20);
+    in.finger_down = 0;
+    in.press_ms = 0;
+    sigrun_step(&s, &in, 20);
+    expect(s.task_min[0] == 59 && s.task_armed == 1 && s.task_running == 0 && s.task_left_ms == 0u, "on the charger the new length waits");
+
+    sigrun_init(&s);
+    sigrun_set_minutes(&s, 2, 80, 12);
+    expect(s.task_min[0] == 5 && s.task_min[1] == 10 && s.task_min[2] == 12, "minutes outside 5 to 59 are left alone");
+
+    glass_body_init(&body);
+    body.timer_face = 1;
+    touch.down = 1;
+    touch.x = 233.f;
+    touch.y = 197.f;
+    glass_body_touch(&body, &touch, 20, &sense);
+    expect(sense.bead_grab, "the bead still takes a short press");
+    for (i = 0; i < 30; i++) {
+        glass_body_touch(&body, &touch, 20, &sense);
+    }
+    expect(!sense.bead_grab && sense.press_ms >= GLASS_DIAL_MS, "a moon dial lets the bead go");
 }
 
 static void run_paint_tests(void)
@@ -608,11 +742,164 @@ static void run_paint_tests(void)
     glass_paint(px, heat, &look);
     expect(px[233 * GLASS_W + 180] != 0, "a half moon is drawn");
     glass_look_clear(&look);
+    look.bare = 1;
+    look.disk = 1.f;
+    look.radius = 140.f;
+    look.radius_lag = 140.f;
+    look.amp = 1.f;
+    look.numeral = 8;
+    look.numeral_light = 1.f;
+    glass_paint(px, heat, &look);
+    expect(px[(233 - 140) * GLASS_W + 233] == 0, "a bare setting draws no ring");
+    expect(px[233 * GLASS_W + 233] != 0, "a bare setting still draws the number");
+    glass_look_clear(&look);
     look.numeral = 5;
     look.numeral_light = 1.f;
     look.radius = 120.f;
     glass_paint(px, heat, &look);
-    expect(px[145 * GLASS_W + 233] != 0, "a five is drawn");
+    {
+        int y;
+        int lit5 = 0;
+        for (y = 150; y < 200; y++) {
+            if (px[y * GLASS_W + 233] != 0) {
+                lit5 = 1;
+            }
+        }
+        expect(lit5, "a five is drawn");
+    }
+    glass_look_clear(&look);
+    look.numeral = 23;
+    look.numeral_light = 1.f;
+    look.amp = 0.f;
+    look.mote = 0.f;
+    look.radius = 118.f;
+    look.sway = 90.f;
+    glass_paint(px, heat, &look);
+    {
+        int x;
+        int y;
+        int max_x = 0;
+        int y0 = -1;
+        int y1 = -1;
+        int gap = 0;
+        int run = 0;
+
+        for (y = 0; y < GLASS_H; y++) {
+            for (x = 0; x < GLASS_W; x++) {
+                if (heat[y * GLASS_W + x] > 40 && x > max_x) {
+                    max_x = x;
+                }
+            }
+        }
+        x = max_x - 8;
+        for (y = 0; y < GLASS_H; y++) {
+            if (heat[y * GLASS_W + x] > 40) {
+                y0 = y;
+                break;
+            }
+        }
+        for (y = GLASS_H - 1; y >= 0; y--) {
+            if (heat[y * GLASS_W + x] > 40) {
+                y1 = y;
+                break;
+            }
+        }
+        for (y = y0; y <= y1; y++) {
+            if (heat[y * GLASS_W + x] > 40) {
+                if (run > gap) {
+                    gap = run;
+                }
+                run = 0;
+            } else {
+                run++;
+            }
+        }
+        if (run > gap) {
+            gap = run;
+        }
+        expect(y1 > y0 + 60 && gap < 24, "a shifted three keeps its right stem");
+    }
+    glass_look_clear(&look);
+    look.numeral = 53;
+    look.numeral_light = 1.f;
+    look.amp = 1.f;
+    look.disk = 1.f;
+    look.radius = 140.f;
+    look.radius_lag = 140.f;
+    glass_paint(px, heat, &look);
+    {
+        int y;
+        int y0 = -1;
+        int y1 = -1;
+        int gaps = 0;
+
+        for (y = 0; y < GLASS_H; y++) {
+            int x;
+            for (x = 270; x < 340; x++) {
+                if (heat[y * GLASS_W + x] > 150) {
+                    if (y0 < 0) {
+                        y0 = y;
+                    }
+                    y1 = y;
+                    break;
+                }
+            }
+        }
+        for (y = y0; y <= y1; y++) {
+            int x;
+            int lit = 0;
+            for (x = 270; x < 340; x++) {
+                if (heat[y * GLASS_W + x] > 150) {
+                    lit = 1;
+                }
+            }
+            if (!lit) {
+                gaps++;
+            }
+        }
+        expect(y0 >= 0 && y1 > y0 + 40 && gaps == 0, "a three has no gap even on a full moon");
+    }
+    {
+        int d;
+        for (d = 1; d <= 9; d++) {
+            int y;
+            int y0 = -1;
+            int y1 = -1;
+            int gaps = 0;
+            glass_look_clear(&look);
+            look.numeral = d;
+            look.numeral_light = 1.f;
+            look.amp = 0.f;
+            look.mote = 0.f;
+            look.radius = 20.f;
+            glass_paint(px, heat, &look);
+            for (y = 0; y < GLASS_H; y++) {
+                int x;
+                for (x = 170; x < 300; x++) {
+                    if (heat[y * GLASS_W + x] > 150) {
+                        if (y0 < 0) {
+                            y0 = y;
+                        }
+                        y1 = y;
+                        break;
+                    }
+                }
+            }
+            for (y = y0; y <= y1; y++) {
+                int x;
+                int lit = 0;
+                for (x = 170; x < 300; x++) {
+                    if (heat[y * GLASS_W + x] > 150) {
+                        lit = 1;
+                    }
+                }
+                if (!lit) {
+                    gaps++;
+                }
+            }
+            expect(y0 >= 0 && gaps == 0, "every digit stays one piece");
+        }
+    }
     glass_look_clear(&look);
     look.rune = 1.f;
     look.radius = 120.f;

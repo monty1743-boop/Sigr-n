@@ -27,7 +27,7 @@ A short press of PWR or BOOT advances one card, on the charger or off it:
 
 The picture is the mode. A moon is a task. The tick is one click a second, and the mote flashes with it. A bright arc is white noise, a warmer arc is pink, a heavy warm ring is brown. Quiet is a plain breath. Noise, the tick, and a task are exclusive. The speaker is silent in quiet.
 
-On the charger a moon is armed and does not count. Off the charger it starts on that press, or when unplugged. The lit fraction is time left over the chosen length, scaled by 0.34, 0.66, or 1. One second after the press the digits 5, 10, or 25 are drawn for about 2 s, then fade in 0.4 s.
+On the charger a moon is armed and does not count. Off the charger it starts on that press, or when unplugged. The moon opens to that length’s fraction of ten, then drains to empty with no refill. 10, 20, 30, 40, and 50 start full. 15 and 25 start half. One second after the press the stored minutes are drawn in the middle for about 2 s, then fade in 0.4 s. Hold any moon and drag to set 5–59 minutes. While the finger is down, and for one second after it lifts, only the number is drawn, opposite the finger. Two faint circles mark the inner and outer reach of that drag. Then the ring, the bead, and the moon return. Untouched moons stay 5, 10, and 25, and the choice remains after the glass is off.
 
 At zero the moon opens again and the panel rises from 35 to 100 over about half a second. The end note swells over the same half second, then decays. Brightness falls back to 35 and the card returns to quiet.
 
